@@ -37,7 +37,8 @@ async def lifespan(_: FastAPI):
     await registry.start()
     engine = AgentEngine(registry, run_store)
     log.info(
-        "devflow ready | model=%s autonomy=%s mock=%s tools=%d",
+        "devflow ready | %s model=%s autonomy=%s mock=%s tools=%d",
+        settings.provider,
         settings.model,
         settings.autonomy,
         settings.mock,
@@ -95,6 +96,7 @@ class ApprovalRequest(BaseModel):
 async def healthz() -> dict[str, Any]:
     return {
         "ok": True,
+        "provider": settings.provider,
         "model": settings.model,
         "autonomy": settings.autonomy,
         "mock": settings.mock,

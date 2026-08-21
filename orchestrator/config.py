@@ -21,9 +21,34 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+# Sensible model default per provider, so switching backends needs one env var.
+_DEFAULT_MODELS = {
+    "anthropic": "claude-opus-5",
+    "openai_compat": "qwen3:32b",
+    "ollama": "qwen3:32b",
+    "vllm": "Qwen/Qwen3-32B",
+    "openrouter": "qwen/qwen3-235b-a22b",
+}
+_PROVIDER = os.getenv("DEVFLOW_PROVIDER", "anthropic").lower()
+
+
 @dataclass(frozen=True)
 class Settings:
-    model: str = os.getenv("DEVFLOW_MODEL", "claude-opus-5")
+    # anthropic | openai_compat (also: ollama, vllm, openrouter as shorthands)
+    provider: str = _PROVIDER
+    model: str = os.getenv("DEVFLOW_MODEL") or _DEFAULT_MODELS.get(
+        _PROVIDER, "claude-opus-5"
+    )
+    base_url: str = os.getenv("DEVFLOW_BASE_URL", "")
+    api_key: str = os.getenv("DEVFLOW_API_KEY", "")
+    temperature: float = _float("DEVFLOW_TEMPERATURE", 0.0)
     effort: str = os.getenv("DEVFLOW_EFFORT", "high")
     max_tokens: int = _int("DEVFLOW_MAX_TOKENS", 32000)
 

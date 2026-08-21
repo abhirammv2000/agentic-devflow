@@ -40,6 +40,41 @@ That buys three things:
 The cost is three extra processes and a startup handshake. For a prototype
 that's an easy trade.
 
+## Why the model sits behind a provider interface
+
+The engine imports no vendor SDK. It hands a provider a system prompt, an opaque
+message history and the MCP tool list, and gets back a normalised `Turn`
+([providers/base.py](orchestrator/providers/base.py)).
+
+The dividing line is *what the engine would otherwise have to know about a
+dialect*, and it turns out to be four things, none of them interesting to an
+agent loop:
+
+| | Anthropic | OpenAI-compatible |
+|---|---|---|
+| tool schema | `{name, description, input_schema}` | wrapped in a `function` envelope |
+| arguments | already an object | a JSON **string** to parse |
+| results | one user message carrying all blocks | one `tool` message each |
+| stop reason | `end_turn` / `tool_use` / `refusal` | `stop` / `tool_calls` / `length` |
+
+What does *not* differ is the tool schema itself: MCP advertises plain JSON
+Schema and both dialects take it unchanged. That is the reason the tool layer
+ports for free, and it is worth noticing that this falls out of MCP being an
+open standard rather than from anything clever here.
+
+Message histories stay in each provider's native format, and the engine treats
+them as opaque JSON — which is exactly what the suspend/resume design already
+required, so the two decisions reinforce each other.
+
+Two concessions to weaker models live in this seam. Unparseable tool arguments
+become a tool error the model can read and correct, rather than an exception
+that kills the run; and a `finish_reason` of `stop` alongside tool calls is
+treated as `tool_use`, because several local runtimes report it that way.
+
+A malformed call is answered immediately rather than being escalated: there is
+nothing coherent for a human to approve in a tool call whose arguments did not
+parse, so paging one would be noise.
+
 ## Why a manual agent loop instead of the SDK tool runner
 
 The SDK's `tool_runner` is the right default and the docs say so. This is the
@@ -51,13 +86,16 @@ human clicks approve. The tool runner's loop lives in memory for the duration of
 one call. Gating inside the tool function would mean blocking a worker for the
 length of a human's lunch break.
 
-So [engine.py](orchestrator/engine.py) drives `messages.stream` itself and
-serialises the entire conversation — including the pending `tool_use` blocks —
-to disk after every step. Resumption reconstitutes it and continues.
+So [engine.py](orchestrator/engine.py) drives the turn loop itself and
+serialises the entire conversation — including the pending tool calls — to disk
+after every step. Resumption reconstitutes it and continues.
 
-The consequence worth knowing: thinking blocks are echoed back verbatim via
-`model_dump(mode="json", exclude_none=True)`. They carry signatures the API
-validates, so they must round-trip through JSON unmodified.
+The consequence worth knowing lives in the Anthropic provider: thinking blocks
+are echoed back verbatim via `model_dump(mode="json", exclude_none=True)`. They
+carry signatures the API validates, so they must round-trip through JSON
+unmodified. The same constraint is why histories stay in native format rather
+than being normalised into some house dialect — a lossy round trip through a
+neutral representation would invalidate them.
 
 ## Why a gated call parks the entire turn
 
@@ -102,7 +140,7 @@ here.
 
 ## Testing strategy
 
-Three layers, none of which call the model:
+Four layers, none of which call a model:
 
 - **[test_policy.py](tests/test_policy.py)** — the decision matrix, the critical
   floor, fail-closed behaviour, and a check that every tool named by a playbook
@@ -114,6 +152,9 @@ Three layers, none of which call the model:
 - **[test_mcp_tools.py](tests/test_mcp_tools.py)** / **[test_api.py](tests/test_api.py)**
   — the tool implementations against a temp store, and the real FastAPI app with
   all three MCP servers actually spawned.
+- **[test_providers.py](tests/test_providers.py)** — both dialects over a mocked
+  HTTP transport: schema conversion each way, result formatting, stop-reason
+  normalisation, and the malformed-arguments path.
 
 `scripts/smoke_test.py` sits alongside them: it drives a complete
 ticket → branch → commit → PR → review sequence through the live MCP layer and
@@ -121,5 +162,9 @@ prints what the current autonomy setting would gate. It is the fastest way to
 confirm a change did not quietly widen the tool surface.
 
 What none of this covers is the model's actual behaviour — whether the prompts
-produce good triage decisions or correct patches. That needs an API key, real
-runs, and an eval set, and it is the obvious next thing to build.
+produce good triage decisions or correct patches. One real run against
+`qwen2.5-coder:7b` (Ollama) showed the gap clearly: the orchestration was
+flawless and the judgement was not, with the model misgrading severity against
+the rubric in its own system prompt and hallucinating a URL into a comment it
+published. Closing that gap needs an eval set, not more plumbing, and it is the
+obvious next thing to build.

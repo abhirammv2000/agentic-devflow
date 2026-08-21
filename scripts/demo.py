@@ -99,8 +99,9 @@ async def main() -> int:
         if v is not None
     }
 
-    print("{}devflow{} playbook={} autonomy={} model={} mock={}".format(
-        BOLD, OFF, args.playbook, args.autonomy, settings.model, settings.mock))
+    print("{}devflow{} playbook={} autonomy={} provider={}:{} mock={}".format(
+        BOLD, OFF, args.playbook, args.autonomy, settings.provider, settings.model,
+        settings.mock))
 
     await registry.start()
     engine = AgentEngine(registry, RunStore())

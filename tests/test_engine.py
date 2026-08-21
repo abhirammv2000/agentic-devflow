@@ -7,15 +7,14 @@ a recording stub, so these tests exercise the orchestration -- not the network.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator.engine import AgentEngine  # noqa: E402
+from orchestrator.providers import END_TURN, TOOL_USE, ToolCall, Turn  # noqa: E402
 from orchestrator.store import (  # noqa: E402
     STATUS_AWAITING_APPROVAL,
     STATUS_COMPLETED,
@@ -27,41 +26,68 @@ from orchestrator.store import (  # noqa: E402
 # doubles
 # --------------------------------------------------------------------------
 
-@dataclass
-class FakeBlock:
-    type: str
-    text: str = ""
-    id: str = ""
-    name: str = ""
-    input: dict[str, Any] = field(default_factory=dict)
+class FakeProvider:
+    """Replays a scripted list of Turns. Uses the Anthropic message shape, but
+    the engine only ever passes these dicts through, so the shape is arbitrary."""
 
-    def model_dump(self, **_kwargs):
-        return {k: v for k, v in self.__dict__.items() if v not in ("", {})} | {
-            "type": self.type
-        }
+    name = "fake"
+    model = "scripted"
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.tools_seen = None
+
+    def prepare_tools(self, mcp_tools):
+        self.tools_seen = mcp_tools
+        return mcp_tools
+
+    def user_message(self, text):
+        return {"role": "user", "content": text}
+
+    def tool_result_messages(self, results):
+        return [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": r.call_id,
+                    "content": r.content,
+                    **({"is_error": True} if r.is_error else {}),
+                }
+                for r in results
+            ],
+        }]
+
+    async def complete(self, system, messages, tools):
+        assert self.script, "the engine asked for more turns than the script provides"
+        return self.script.pop(0)
 
 
-@dataclass
-class FakeUsage:
-    input_tokens: int = 100
-    output_tokens: int = 50
+def text_turn(message: str) -> Turn:
+    return Turn(
+        stop_reason=END_TURN,
+        text=message,
+        assistant_message={"role": "assistant", "content": message},
+        input_tokens=100,
+        output_tokens=50,
+    )
 
 
-@dataclass
-class FakeResponse:
-    content: list[FakeBlock]
-    stop_reason: str
-    usage: FakeUsage = field(default_factory=FakeUsage)
-    stop_details: Any = None
+def tool_turn(*calls: tuple[str, str, dict]) -> Turn:
+    return Turn(
+        stop_reason=TOOL_USE,
+        tool_calls=[ToolCall(id=i, name=n, arguments=a) for i, n, a in calls],
+        assistant_message={"role": "assistant", "content": "(tool calls)"},
+        input_tokens=100,
+        output_tokens=50,
+    )
 
 
-def text_turn(message: str) -> FakeResponse:
-    return FakeResponse([FakeBlock("text", text=message)], "end_turn")
-
-
-def tool_turn(*calls: tuple[str, str, dict]) -> FakeResponse:
-    return FakeResponse(
-        [FakeBlock("tool_use", id=i, name=n, input=a) for i, n, a in calls], "tool_use"
+def malformed_turn(call_id: str, name: str, why: str) -> Turn:
+    return Turn(
+        stop_reason=TOOL_USE,
+        tool_calls=[ToolCall(id=call_id, name=name, arguments={}, parse_error=why)],
+        assistant_message={"role": "assistant", "content": "(bad tool call)"},
     )
 
 
@@ -79,13 +105,8 @@ class FakeRegistry:
 
 class ScriptedEngine(AgentEngine):
     def __init__(self, registry, store, script):
-        super().__init__(registry, store, client=object())
-        self.script = list(script)
+        super().__init__(registry, store, provider=FakeProvider(script))
         self.notifications: list[str] = []
-
-    async def _call_model(self, run, book, tools):
-        assert self.script, "the engine asked for more turns than the script provides"
-        return self.script.pop(0)
 
     async def _notify(self, event, run):
         self.notifications.append(event)
@@ -293,3 +314,43 @@ async def test_runaway_loop_hits_the_iteration_cap(store, monkeypatch):
     assert "iteration limit" in run.error
     assert run.iterations == 4
     assert "run.failed" in engine.notifications
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_arguments_never_reach_a_human(store):
+    """Open models emit unparseable arguments often enough that this path
+    matters: there is nothing coherent to approve, so the model is told
+    directly rather than a reviewer being paged."""
+    registry = FakeRegistry()
+    engine = ScriptedEngine(
+        registry,
+        store,
+        [
+            malformed_turn("t1", "jira_create_issue", "arguments were not valid JSON"),
+            text_turn("Retried and gave up."),
+        ],
+    )
+
+    run = await engine.start("issue_triage", {"repo": "a/b", "number": 41}, "semi")
+
+    assert run.status == STATUS_COMPLETED
+    assert registry.executed == []
+    assert "run.approval_required" not in engine.notifications
+    assert any(e["kind"] == "tool_malformed" for e in run.events)
+    feedback = next(
+        block
+        for message in run.messages
+        if isinstance(message.get("content"), list)
+        for block in message["content"]
+        if block.get("type") == "tool_result"
+    )
+    assert feedback["is_error"] is True
+    assert "not valid JSON" in feedback["content"]
+
+
+@pytest.mark.asyncio
+async def test_run_records_which_model_produced_it(store):
+    engine = ScriptedEngine(FakeRegistry(), store, [text_turn("done")])
+    run = await engine.start("review_pr", {"repo": "a/b", "number": 7}, "semi")
+    assert run.provider == "fake:scripted"
+    assert run.public()["provider"] == "fake:scripted"

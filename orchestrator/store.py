@@ -33,6 +33,7 @@ class Run:
     playbook: str
     inputs: dict[str, Any]
     autonomy: str
+    provider: str = ""
     status: str = STATUS_RUNNING
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending: dict[str, Any] | None = None
@@ -61,6 +62,7 @@ class Run:
             "summary": self.summary,
             "error": self.error,
             "autonomy": self.autonomy,
+            "provider": self.provider,
             "inputs": self.inputs,
             "iterations": self.iterations,
             "tool_calls": self.tool_calls,

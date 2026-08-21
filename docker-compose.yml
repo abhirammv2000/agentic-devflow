@@ -7,6 +7,11 @@ services:
       DEVFLOW_DATA_DIR: /app/data
       DEVFLOW_WORKSPACE: /app/sandbox/demo-repo
       N8N_APPROVAL_WEBHOOK: http://n8n:5678/webhook/devflow-approval-request
+      # Point at a model server on the host with host.docker.internal, e.g.
+      #   DEVFLOW_PROVIDER: openai_compat
+      #   DEVFLOW_BASE_URL: http://host.docker.internal:11434/v1
+      #   DEVFLOW_MODEL: qwen3:32b
+      DEVFLOW_PROVIDER: ${DEVFLOW_PROVIDER:-anthropic}
     volumes:
       - ./data:/app/data
       - ./sandbox:/app/sandbox

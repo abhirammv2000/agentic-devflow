@@ -3,7 +3,8 @@
 A working prototype of an agent that does real engineering chores — triaging
 issues, turning tickets into tested pull requests, reviewing diffs, keeping docs
 honest — where **n8n** owns the triggers and the human approvals, **MCP** owns
-the tool layer, and **Claude** owns the reasoning.
+the tool layer, and any tool-calling LLM owns the reasoning: Claude, or an
+open-weights model served locally.
 
 The interesting part is not that an agent can call the GitHub API. It is the
 word *semi*: every action is classified by blast radius, and anything past the
@@ -33,7 +34,7 @@ pip install -r requirements.txt
 cp .env.example .env                               # then set ANTHROPIC_API_KEY
 
 python scripts/smoke_test.py                       # no model calls — checks MCP + policy
-python -m pytest -q                                # 39 tests
+python -m pytest -q                                # 55 tests
 
 python scripts/demo.py issue_triage --repo acme/checkout-service --number 41
 ```
@@ -107,10 +108,60 @@ Workflow 04 is the one that makes this semi-autonomous: the orchestrator calls
 it back on `run.approval_required`, it renders an approval card with
 approve/reject links, and the reviewer's click resumes the parked run.
 
+## Choosing a model
+
+The engine never imports a vendor SDK. Backends live behind
+[providers/](orchestrator/providers/) and are chosen with one env var.
+
+```bash
+# Claude (default)
+DEVFLOW_PROVIDER=anthropic  DEVFLOW_MODEL=claude-opus-5  ANTHROPIC_API_KEY=...
+
+# any OpenAI-compatible server: Ollama, vLLM, llama.cpp, LM Studio,
+# OpenRouter, Together, Groq, ...
+DEVFLOW_PROVIDER=ollama  DEVFLOW_MODEL=qwen3:32b
+DEVFLOW_PROVIDER=openai_compat
+DEVFLOW_BASE_URL=http://localhost:8000/v1
+DEVFLOW_MODEL=Qwen/Qwen3-32B
+```
+
+MCP advertises plain JSON Schema, which both dialects accept unchanged — that is
+what makes the tool layer portable. What the provider absorbs is the rest of the
+dialect: the `function` envelope, arguments arriving as a JSON *string*, one
+`tool` message per result instead of a batch, and a different `finish_reason`
+vocabulary.
+
+**Verified against a local open model.** `issue_triage` completes end to end on
+`qwen2.5-coder:7b` via Ollama — tools called, gate honoured, side effects landed:
+
+```
+proposed  gh_set_labels      tier=write    -> auto
+proposed  jira_create_issue  tier=publish  -> needs_approval
+EXECUTED  gh_set_labels                         <- only after the human decided
+human     jira_create_issue  approved=True
+EXECUTED  jira_create_issue
+```
+
+**How good the model needs to be is a separate question.** Across two runs the
+7B model graded the same double-charge bug sev2 once and sev1 once — the rubric
+in its own system prompt says `sev1 = money loss`, so it was inconsistent rather
+than reliably wrong. It also called one tool twice with identical arguments and
+hallucinated a Jira hostname into a comment it published. The plumbing was
+identical both times; the judgement was not. Two samples is not an evaluation,
+which is rather the point: you cannot tell a good backend from a bad one by
+watching it succeed once.
+
+Expect to need a strong tool-calling model — the playbooks expose 10–18 tools
+and require multi-step planning. `review_pr` and `issue_triage` are the
+forgiving ones; `implement_ticket` is the demanding one. Two failure modes the
+provider handles because small models cause them routinely: arguments that are
+not valid JSON (fed back as a tool error rather than crashing the run) and
+`finish_reason: "stop"` reported alongside tool calls.
+
 ## Going live
 
 Set `DEVFLOW_MOCK=0` and supply `GITHUB_TOKEN` / `JIRA_*` credentials. The MCP
-tools present an identical surface to Claude in both modes — mock and live
+tools present an identical surface to the model in both modes — mock and live
 differ only below the tool boundary, so nothing about the agent's behaviour
 changes when you flip it.
 
@@ -120,7 +171,8 @@ changes when you flip it.
 mcp_servers/       three MCP servers: GitHub, Jira, sandboxed working copy
 orchestrator/
   policy.py        risk tiers and the autonomy ceiling      <- the safety boundary
-  engine.py        the suspendable agent loop
+  engine.py        the suspendable agent loop (vendor-neutral)
+  providers/       model backends: Claude, or any OpenAI-compatible server
   playbooks.py     the four tasks: prompt + tool surface
   store.py         durable run state (survives the human round trip)
   mcp_registry.py  stdio MCP client -> one flat tool surface
@@ -145,7 +197,11 @@ This is a prototype, and a few things are deliberately simple:
   pointing this at code you do not control.
 - **The approve/reject links in workflow 04 are unauthenticated.** Anyone with
   the URL can approve. Add n8n webhook auth, or signed tokens, before real use.
-- **Live model behaviour is unverified here.** The loop, the policy, the MCP
-  layer and the HTTP contract are all covered by the 39 tests and the smoke
-  test, but none of them call the Claude API — that path needs an
-  `ANTHROPIC_API_KEY` and a run of `scripts/demo.py`.
+- **Model quality is not evaluated.** The 55 tests and the smoke test cover the
+  loop, the policy, the MCP layer, the HTTP contract and both provider dialects,
+  but none of them judge whether the agent's decisions are *good*. That needs an
+  eval set, and it is the obvious next thing to build.
+- **The Claude path is structurally checked, not run.** Every request parameter
+  is verified against the installed SDK, but no live Anthropic call has been
+  made here — that needs an `ANTHROPIC_API_KEY`. The open-model path has been
+  run for real (see above), on one playbook, once.

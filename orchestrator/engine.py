@@ -1,6 +1,6 @@
 """The agent loop.
 
-Manual rather than SDK tool-runner on purpose: a run must be able to stop in
+Manual rather than an SDK tool-runner on purpose: a run must be able to stop in
 the middle of a turn, persist itself, and be resumed by a *different* HTTP
 request once a human has approved the pending action. See store.py.
 
@@ -11,6 +11,10 @@ Turn structure:
         -> all auto?      execute them, feed results back, keep going
         -> any needs approval?  persist, notify n8n, return; resume later
         -> any denied?    feed back an error result and let the model adapt
+
+Nothing here is vendor-specific. The model is reached through a Provider
+(providers/base.py) and the tools through MCP, so swapping Claude for a
+locally-served open-weights model changes configuration, not this file.
 """
 
 from __future__ import annotations
@@ -19,12 +23,12 @@ import json
 import logging
 from typing import Any
 
-import anthropic
 import httpx
 
-from . import playbooks, policy
+from . import playbooks, policy, providers
 from .config import settings
 from .mcp_registry import MCPRegistry
+from .providers import Provider, ToolResult
 from .store import (
     STATUS_AWAITING_APPROVAL,
     STATUS_COMPLETED,
@@ -36,21 +40,18 @@ from .store import (
 
 log = logging.getLogger("devflow.engine")
 
-# Route around safety-classifier refusals instead of failing the run.
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
 
 class AgentEngine:
     def __init__(
         self,
         registry: MCPRegistry,
         store: RunStore,
-        client: anthropic.AsyncAnthropic | None = None,
+        provider: Provider | None = None,
     ) -> None:
         self.registry = registry
         self.store = store
-        # Injectable so tests can drive the loop without hitting the API.
-        self.client = client or anthropic.AsyncAnthropic()
+        # Injectable so tests can drive the loop without a model behind it.
+        self.provider = provider or providers.build_provider(settings)
 
     # ------------------------------------------------------------------
     # public entry points
@@ -65,8 +66,15 @@ class AgentEngine:
             raise ValueError("missing required inputs: " + ", ".join(missing))
 
         run = self.store.create(playbook_name, inputs, autonomy or settings.autonomy)
-        run.messages = [{"role": "user", "content": book.render(inputs)}]
-        run.log("started", playbook=playbook_name, inputs=inputs, autonomy=run.autonomy)
+        run.provider = "{}:{}".format(self.provider.name, self.provider.model)
+        run.messages = [self.provider.user_message(book.render(inputs))]
+        run.log(
+            "started",
+            playbook=playbook_name,
+            inputs=inputs,
+            autonomy=run.autonomy,
+            provider=run.provider,
+        )
         self.store.save(run)
         return await self._loop(run)
 
@@ -75,18 +83,17 @@ class AgentEngine:
     ) -> Run:
         """Apply a human's approve/reject decisions and continue the run.
 
-        `decisions` maps tool_use_id -> approved. Anything left unspecified is
+        `decisions` maps tool call id -> approved. Anything left unspecified is
         treated as rejected: silence is not consent.
         """
         if run.status != STATUS_AWAITING_APPROVAL or not run.pending:
             raise ValueError("run {} is not awaiting approval".format(run.id))
 
-        calls = run.pending["calls"]
-        results: list[dict[str, Any]] = []
+        results: list[ToolResult] = []
 
-        for call in calls:
+        for call in run.pending["calls"]:
             if call["decision"] == policy.DECISION_DENIED:
-                results.append(self._error_result(call["id"], call["policy_reason"]))
+                results.append(ToolResult(call["id"], call["policy_reason"], True))
                 run.log("tool_denied", tool=call["name"], reason=call["policy_reason"])
                 continue
 
@@ -101,19 +108,20 @@ class AgentEngine:
                 )
                 if not approved:
                     results.append(
-                        self._error_result(
+                        ToolResult(
                             call["id"],
                             "A human reviewer declined this action{}. Do not retry it "
                             "and do not route around it.".format(
                                 ": " + note if note else ""
                             ),
+                            True,
                         )
                     )
                     continue
 
             results.append(await self._execute(run, call))
 
-        run.messages.append({"role": "user", "content": results})
+        run.messages.extend(self.provider.tool_result_messages(results))
         run.pending = None
         run.status = STATUS_RUNNING
         self.store.save(run)
@@ -125,7 +133,7 @@ class AgentEngine:
 
     async def _loop(self, run: Run) -> Run:
         book = playbooks.get(run.playbook)
-        tools = self.registry.tools_for(book.allowed_tools)
+        tools = self.provider.prepare_tools(self.registry.tools_for(book.allowed_tools))
 
         while True:
             if run.iterations >= settings.max_iterations:
@@ -139,54 +147,47 @@ class AgentEngine:
 
             run.iterations += 1
             try:
-                response = await self._call_model(run, book, tools)
+                turn = await self.provider.complete(book.system, run.messages, tools)
             except Exception as exc:
                 return await self._fail(run, "{}: {}".format(type(exc).__name__, exc))
 
-            run.add_usage(response.usage.input_tokens, response.usage.output_tokens)
-            content = [
-                block.model_dump(mode="json", exclude_none=True)
-                for block in response.content
-            ]
+            run.add_usage(turn.input_tokens, turn.output_tokens)
 
-            if response.stop_reason == "refusal":
-                details = getattr(response, "stop_details", None)
+            if turn.stop_reason == providers.REFUSAL:
                 return await self._fail(
-                    run,
-                    "the model declined this request (category: {})".format(
-                        getattr(details, "category", "unknown")
-                    ),
+                    run, "the model declined this request ({})".format(turn.detail or "?")
                 )
 
-            if response.stop_reason == "max_tokens":
-                return await self._fail(run, "response hit max_tokens; raise DEVFLOW_MAX_TOKENS")
+            if turn.stop_reason == providers.MAX_TOKENS:
+                return await self._fail(
+                    run, "response hit max_tokens; raise DEVFLOW_MAX_TOKENS"
+                )
 
-            if response.stop_reason == "pause_turn":
-                run.messages.append({"role": "assistant", "content": content})
+            if turn.stop_reason == "pause_turn":
+                run.messages.append(turn.assistant_message)
                 self.store.save(run)
                 continue
 
-            if response.stop_reason != "tool_use":
-                run.summary = self._text_of(response)
+            if turn.stop_reason != providers.TOOL_USE:
+                run.summary = turn.text
                 run.status = STATUS_COMPLETED
-                run.messages.append({"role": "assistant", "content": content})
+                run.messages.append(turn.assistant_message)
                 run.log("completed", summary=run.summary)
                 self.store.save(run)
                 await self._notify("run.completed", run)
                 return run
 
-            run.messages.append({"role": "assistant", "content": content})
+            run.messages.append(turn.assistant_message)
 
             calls = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                decision = policy.evaluate(block.name, run.autonomy, book.allowed_tools)
+            for call in turn.tool_calls:
+                decision = policy.evaluate(call.name, run.autonomy, book.allowed_tools)
                 calls.append(
                     {
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
+                        "id": call.id,
+                        "name": call.name,
+                        "input": call.arguments,
+                        "parse_error": call.parse_error,
                         "decision": decision.action,
                         "tier": decision.tier,
                         "policy_reason": decision.reason,
@@ -194,11 +195,33 @@ class AgentEngine:
                 )
                 run.log(
                     "tool_proposed",
-                    tool=block.name,
+                    tool=call.name,
                     tier=decision.tier,
                     decision=decision.action,
                     reason=decision.reason,
                 )
+
+            # A malformed tool call is answered immediately: it never reaches a
+            # human, because there is nothing coherent to approve. Weaker open
+            # models emit unparseable arguments often enough to matter.
+            if any(c["parse_error"] for c in calls):
+                results = []
+                for c in calls:
+                    if c["parse_error"]:
+                        run.log("tool_malformed", tool=c["name"], reason=c["parse_error"])
+                        results.append(ToolResult(c["id"], c["parse_error"], True))
+                    else:
+                        results.append(
+                            ToolResult(
+                                c["id"],
+                                "Not executed: another tool call in this turn was "
+                                "malformed. Reissue the whole turn.",
+                                True,
+                            )
+                        )
+                run.messages.extend(self.provider.tool_result_messages(results))
+                self.store.save(run)
+                continue
 
             if any(c["decision"] == policy.DECISION_APPROVAL for c in calls):
                 run.pending = {
@@ -216,7 +239,7 @@ class AgentEngine:
                     ],
                 }
                 run.status = STATUS_AWAITING_APPROVAL
-                run.summary = self._text_of(response) or "Waiting for human approval."
+                run.summary = turn.text or "Waiting for human approval."
                 self.store.save(run)
                 await self._notify("run.approval_required", run)
                 return run
@@ -224,41 +247,19 @@ class AgentEngine:
             results = []
             for call in calls:
                 if call["decision"] == policy.DECISION_DENIED:
-                    results.append(self._error_result(call["id"], call["policy_reason"]))
+                    results.append(ToolResult(call["id"], call["policy_reason"], True))
                     run.log("tool_denied", tool=call["name"], reason=call["policy_reason"])
                 else:
                     results.append(await self._execute(run, call))
 
-            run.messages.append({"role": "user", "content": results})
+            run.messages.extend(self.provider.tool_result_messages(results))
             self.store.save(run)
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
 
-    async def _call_model(self, run: Run, book: playbooks.Playbook, tools) -> Any:
-        # Streaming keeps long tool-heavy turns under the HTTP timeout; the
-        # cache breakpoint on the system block covers the (stable) tool list too.
-        async with self.client.beta.messages.stream(
-            model=settings.model,
-            max_tokens=settings.max_tokens,
-            system=[
-                {
-                    "type": "text",
-                    "text": book.system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=run.messages,
-            tools=tools,
-            thinking={"type": "adaptive"},
-            output_config={"effort": settings.effort},
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-        ) as stream:
-            return await stream.get_final_message()
-
-    async def _execute(self, run: Run, call: dict[str, Any]) -> dict[str, Any]:
+    async def _execute(self, run: Run, call: dict[str, Any]) -> ToolResult:
         run.tool_calls += 1
         text, is_error = await self.registry.call(call["name"], call["input"])
         run.log(
@@ -271,25 +272,7 @@ class AgentEngine:
             result=text[:1500],
         )
         self.store.save(run)
-        return {
-            "type": "tool_result",
-            "tool_use_id": call["id"],
-            "content": text,
-            **({"is_error": True} if is_error else {}),
-        }
-
-    @staticmethod
-    def _error_result(tool_use_id: str, message: str) -> dict[str, Any]:
-        return {
-            "type": "tool_result",
-            "tool_use_id": tool_use_id,
-            "content": message,
-            "is_error": True,
-        }
-
-    @staticmethod
-    def _text_of(response) -> str:
-        return "\n".join(b.text for b in response.content if b.type == "text").strip()
+        return ToolResult(call["id"], text, is_error)
 
     async def _fail(self, run: Run, message: str) -> Run:
         run.status = STATUS_FAILED

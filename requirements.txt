@@ -1,3 +1,5 @@
+# Only needed for DEVFLOW_PROVIDER=anthropic; the openai_compat
+# backend speaks HTTP directly and needs no vendor SDK.
 anthropic>=1.0.0
 mcp>=2.0.0
 fastapi>=0.115.0
