@@ -1,0 +1,269 @@
+{
+  "name": "DevFlow · 02 · Jira ticket to pull request",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jira-ticket-ready",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf2-webhook",
+      "name": "Jira webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        0
+      ],
+      "webhookId": "devflow-jira-ticket-ready"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "labelled-for-agent",
+              "leftValue": "={{ ($json.body.issue.fields.labels || []).join(',') }}",
+              "rightValue": "ai-assist",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf2-filter",
+      "name": "Has ai-assist label?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.stringify({ jira_key: $json.body.issue.key, repo: $env.DEVFLOW_DEFAULT_REPO || 'acme/checkout-service', branch: 'devflow/' + String($json.body.issue.key).toLowerCase() }) }}",
+        "options": {}
+      },
+      "id": "wf2-shape",
+      "name": "Shape run inputs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DEVFLOW_URL || 'http://orchestrator:8088' }}/runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Devflow-Token",
+              "value": "={{ $env.DEVFLOW_SERVICE_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ playbook: 'implement_ticket', inputs: $json, wait: true }) }}",
+        "options": {
+          "timeout": 1800000
+        }
+      },
+      "id": "wf2-run",
+      "name": "Run implement_ticket playbook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "needs-human",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "awaiting_approval",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf2-gate",
+      "name": "Paused for approval?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        -100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "wf2-noop",
+      "name": "Approval handled by workflow 04",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        800,
+        -200
+      ],
+      "notes": "The run is parked server-side. Workflow 04 received the run.approval_required callback and owns the reviewer round trip.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ run_id: $json.run_id, status: $json.status, summary: $json.summary, pending_approvals: $json.pending_approvals }) }}",
+        "options": {}
+      },
+      "id": "wf2-respond",
+      "name": "Ack Jira",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        800,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ skipped: true, reason: 'ticket is not labelled ai-assist' }) }}",
+        "options": {}
+      },
+      "id": "wf2-skip",
+      "name": "Ignore ticket",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        140
+      ]
+    }
+  ],
+  "connections": {
+    "Jira webhook": {
+      "main": [
+        [
+          {
+            "node": "Has ai-assist label?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has ai-assist label?": {
+      "main": [
+        [
+          {
+            "node": "Shape run inputs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape run inputs": {
+      "main": [
+        [
+          {
+            "node": "Run implement_ticket playbook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run implement_ticket playbook": {
+      "main": [
+        [
+          {
+            "node": "Paused for approval?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paused for approval?": {
+      "main": [
+        [
+          {
+            "node": "Approval handled by workflow 04",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ack Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval handled by workflow 04": {
+      "main": [
+        [
+          {
+            "node": "Ack Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "devflow"
+    }
+  ]
+}

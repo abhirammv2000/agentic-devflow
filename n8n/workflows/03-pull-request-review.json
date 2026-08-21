@@ -1,0 +1,174 @@
+{
+  "name": "DevFlow · 03 · Pull request review",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-pr-event",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf3-webhook",
+      "name": "GitHub PR webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-360, 0],
+      "webhookId": "devflow-github-pr-event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "reviewable-action",
+              "leftValue": "={{ ['opened','reopened','ready_for_review','synchronize'].includes($json.body.action) }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            },
+            {
+              "id": "not-draft",
+              "leftValue": "={{ $json.body.pull_request.draft }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "false", "singleValue": true }
+            },
+            {
+              "id": "not-our-own-pr",
+              "leftValue": "={{ $json.body.pull_request.user.login }}",
+              "rightValue": "devflow-agent",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf3-filter",
+      "name": "Reviewable PR?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-120, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DEVFLOW_URL || 'http://orchestrator:8088' }}/triggers/github-pr",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Devflow-Token", "value": "={{ $env.DEVFLOW_SERVICE_TOKEN }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ repo: $json.body.repository.full_name, number: $json.body.pull_request.number }) }}",
+        "options": { "timeout": 1200000 }
+      },
+      "id": "wf3-run",
+      "name": "Run review_pr playbook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "review-failed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "failed",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf3-check",
+      "name": "Run failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [360, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DEVFLOW_ALERT_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: 'DevFlow review run ' + $json.run_id + ' failed: ' + $json.error }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "wf3-alert",
+      "name": "Alert the on-call channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, -220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ run_id: $json.run_id, status: $json.status, summary: $json.summary }) }}",
+        "options": {}
+      },
+      "id": "wf3-respond",
+      "name": "Ack GitHub",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [600, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ skipped: true, reason: 'draft, bot-authored, or non-reviewable action' }) }}",
+        "options": {}
+      },
+      "id": "wf3-skip",
+      "name": "Ignore event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [120, 140]
+    }
+  ],
+  "connections": {
+    "GitHub PR webhook": {
+      "main": [[{ "node": "Reviewable PR?", "type": "main", "index": 0 }]]
+    },
+    "Reviewable PR?": {
+      "main": [
+        [{ "node": "Run review_pr playbook", "type": "main", "index": 0 }],
+        [{ "node": "Ignore event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Run review_pr playbook": {
+      "main": [[{ "node": "Run failed?", "type": "main", "index": 0 }]]
+    },
+    "Run failed?": {
+      "main": [
+        [{ "node": "Alert the on-call channel", "type": "main", "index": 0 }],
+        [{ "node": "Ack GitHub", "type": "main", "index": 0 }]
+      ]
+    },
+    "Alert the on-call channel": {
+      "main": [[{ "node": "Ack GitHub", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "pinData": {},
+  "tags": [{ "name": "devflow" }]
+}

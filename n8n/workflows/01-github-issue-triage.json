@@ -1,0 +1,116 @@
+{
+  "name": "DevFlow · 01 · GitHub issue triage",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-issue-opened",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf1-webhook",
+      "name": "GitHub issue webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-320, 0],
+      "webhookId": "devflow-github-issue-opened"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-opened",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "opened",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "not-a-bot",
+              "leftValue": "={{ $json.body.issue.user.login }}",
+              "rightValue": "devflow-agent",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf1-filter",
+      "name": "Newly opened by a human?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-100, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DEVFLOW_URL || 'http://orchestrator:8088' }}/triggers/github-issue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Devflow-Token", "value": "={{ $env.DEVFLOW_SERVICE_TOKEN }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ repo: $json.body.repository.full_name, number: $json.body.issue.number, jira_project: $env.DEVFLOW_JIRA_PROJECT || 'ENG' }) }}",
+        "options": { "timeout": 600000 }
+      },
+      "id": "wf1-run",
+      "name": "Run issue_triage playbook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [140, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ run_id: $json.run_id, status: $json.status, summary: $json.summary }) }}",
+        "options": {}
+      },
+      "id": "wf1-respond",
+      "name": "Ack GitHub",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [380, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ skipped: true, reason: 'not a newly opened human issue' }) }}",
+        "options": {}
+      },
+      "id": "wf1-skip",
+      "name": "Ignore event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [140, 120]
+    }
+  ],
+  "connections": {
+    "GitHub issue webhook": {
+      "main": [[{ "node": "Newly opened by a human?", "type": "main", "index": 0 }]]
+    },
+    "Newly opened by a human?": {
+      "main": [
+        [{ "node": "Run issue_triage playbook", "type": "main", "index": 0 }],
+        [{ "node": "Ignore event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Run issue_triage playbook": {
+      "main": [[{ "node": "Ack GitHub", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "pinData": {},
+  "tags": [{ "name": "devflow" }]
+}

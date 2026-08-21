@@ -1,0 +1,45 @@
+services:
+  orchestrator:
+    build: .
+    container_name: devflow-orchestrator
+    env_file: .env
+    environment:
+      DEVFLOW_DATA_DIR: /app/data
+      DEVFLOW_WORKSPACE: /app/sandbox/demo-repo
+      N8N_APPROVAL_WEBHOOK: http://n8n:5678/webhook/devflow-approval-request
+    volumes:
+      - ./data:/app/data
+      - ./sandbox:/app/sandbox
+    ports:
+      - "8088:8088"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8088/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: devflow-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_PORT: 5678
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: UTC
+      # Read inside workflows as $env.<NAME>
+      N8N_PUBLIC_URL: http://localhost:5678
+      DEVFLOW_URL: http://orchestrator:8088
+      DEVFLOW_SERVICE_TOKEN: ${DEVFLOW_SERVICE_TOKEN:-dev-local-token}
+      DEVFLOW_DEFAULT_REPO: ${DEVFLOW_DEFAULT_REPO:-acme/checkout-service}
+      DEVFLOW_JIRA_PROJECT: ${DEVFLOW_JIRA_PROJECT:-ENG}
+      DEVFLOW_ALERT_WEBHOOK: ${DEVFLOW_ALERT_WEBHOOK:-http://orchestrator:8088/healthz}
+      # Expose the vars above to workflow expressions
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      orchestrator:
+        condition: service_healthy
