@@ -20,6 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Model output is UTF-8; the Windows console defaults to cp1252 and would raise
+# UnicodeEncodeError on any arrow or dash the model writes.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 from orchestrator import playbooks  # noqa: E402
 from orchestrator.config import settings  # noqa: E402
 from orchestrator.engine import AgentEngine  # noqa: E402
