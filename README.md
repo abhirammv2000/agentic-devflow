@@ -197,11 +197,20 @@ This is a prototype, and a few things are deliberately simple:
   pointing this at code you do not control.
 - **The approve/reject links in workflow 04 are unauthenticated.** Anyone with
   the URL can approve. Add n8n webhook auth, or signed tokens, before real use.
-- **Model quality is not evaluated.** The 55 tests and the smoke test cover the
+- **Model quality is not evaluated.** The 56 tests and the smoke test cover the
   loop, the policy, the MCP layer, the HTTP contract and both provider dialects,
   but none of them judge whether the agent's decisions are *good*. That needs an
   eval set, and it is the obvious next thing to build.
-- **The Claude path is structurally checked, not run.** Every request parameter
-  is verified against the installed SDK, but no live Anthropic call has been
-  made here — that needs an `ANTHROPIC_API_KEY`. The open-model path has been
-  run for real (see above), on one playbook, once.
+- **The Claude path has been run live, against a real GitHub PR, not just
+  structurally checked.** `review_pr` against
+  [a real sandbox PR](https://github.com/abhirammv2000/devflow-sandbox/pull/1)
+  correctly found a planted double-charge bug (no idempotency key on retry)
+  and two secondary defects, at a quality matching a real review. It also
+  surfaced something the mock backend cannot: GitHub rejects
+  `APPROVE`/`REQUEST_CHANGES` on your own pull request with a 422 (a
+  `COMMENT`-type review is allowed). `gh_review_pull_request` now catches that
+  specific case and falls back to posting the findings as a plain comment
+  instead of failing the run — [mcp_servers/github_server.py](mcp_servers/github_server.py),
+  tested in mock mode against a fake 422 via `httpx.MockTransport`, then
+  re-verified against the real PR. This is the difference running live is
+  for: a mock cannot enforce a policy it does not know GitHub has.

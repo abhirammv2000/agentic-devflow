@@ -9,6 +9,7 @@ import base64
 import difflib
 from typing import Any
 
+import httpx
 from mcp.server import MCPServer
 
 from .backends import MOCK, err, github_client, ok, store
@@ -344,7 +345,30 @@ def gh_review_pull_request(repo: str, number: int, event: str, body: str) -> dic
             "/repos/{}/pulls/{}/reviews".format(repo, number),
             json={"event": event, "body": body},
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # GitHub allows a COMMENT-type review on your own pull request but
+            # rejects APPROVE/REQUEST_CHANGES on it with this specific 422.
+            # A demo/portfolio run is commonly against a repo the agent's own
+            # token owns, so this is the realistic case, not an edge case:
+            # discovered by actually running this against a real PR, not
+            # something the mock backend could ever have surfaced. Falling
+            # back to a plain comment keeps the findings published instead of
+            # the whole run failing on a GitHub policy the agent can't change.
+            if resp.status_code == 422 and "own pull request" in resp.text.lower():
+                c.post(
+                    "/repos/{}/issues/{}/comments".format(repo, number),
+                    json={"body": "**Review findings ({}, posted as a comment: "
+                          "GitHub does not allow APPROVE/REQUEST_CHANGES on your "
+                          "own pull request)**\n\n{}".format(event, body)},
+                ).raise_for_status()
+                return ok(
+                    reviewed="{}#{}".format(repo, number),
+                    event=event,
+                    fallback="posted as issue comment, self-review not allowed",
+                )
+            raise exc
         return ok(reviewed="{}#{}".format(repo, number), event=event)
 
 

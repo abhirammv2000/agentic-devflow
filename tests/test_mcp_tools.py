@@ -6,6 +6,7 @@ import importlib
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -107,3 +108,44 @@ def test_search_finds_lines(servers):
     _, _, repo = servers
     hits = repo.repo_search(r"VALUE")["matches"]
     assert hits and hits[0]["file"] == "src/app.py"
+
+
+def test_review_falls_back_to_a_comment_on_own_pull_request(monkeypatch, tmp_path):
+    """Live mode only: found by actually running review_pr against a real PR
+    the agent's own token had opened. GitHub allows a COMMENT-type review on
+    your own PR but rejects APPROVE/REQUEST_CHANGES on it with a 422, and the
+    mock backend has no way to reproduce a restriction that only exists on
+    GitHub's real API. httpx.MockTransport gives a real Response object (so
+    raise_for_status behaves exactly as in production) without a network call.
+    """
+    monkeypatch.setenv("DEVFLOW_MOCK", "0")
+    monkeypatch.setenv("DEVFLOW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    from mcp_servers import backends
+
+    importlib.reload(backends)
+    gh = importlib.reload(importlib.import_module("mcp_servers.github_server"))
+
+    calls: list[str] = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("/reviews"):
+            return httpx.Response(
+                422,
+                json={"message": "Unprocessable Entity",
+                      "errors": ["Review Can not request changes on your own pull request"]},
+            )
+        return httpx.Response(200, json={"html_url": "https://example/comment/1"})
+
+    monkeypatch.setattr(
+        gh, "github_client",
+        lambda: httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(handler)),
+    )
+
+    result = gh.gh_review_pull_request("acme/checkout-service", 1, "REQUEST_CHANGES", "fix this")
+    assert result["ok"]
+    assert "fallback" in result
+    assert calls == ["/repos/acme/checkout-service/pulls/1/reviews",
+                      "/repos/acme/checkout-service/issues/1/comments"]
