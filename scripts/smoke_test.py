@@ -31,22 +31,31 @@ from orchestrator.policy import evaluate, tier_of  # noqa: E402
 REPO = "acme/checkout-service"
 
 
-async def call(tool: str, **kwargs):
-    """kwargs are the tool arguments; note some tools take their own `name`."""
-    text, is_error = await registry.call(tool, kwargs)
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        payload = {"raw": text}
-    status = "FAIL" if is_error or payload.get("ok") is False else "ok  "
-    print("  {} {:<24} {}".format(status, tool, str(payload)[:96]))
-    return payload
-
-
 async def main() -> int:
     print("starting MCP servers...")
     await registry.start()
     failures = 0
+
+    async def call(tool: str, **kwargs):
+        """kwargs are the tool arguments; note some tools take their own `name`.
+
+        Counts toward `failures` itself so a broken step can't silently pass
+        CI just because nobody remembered to check its result at the call
+        site - every prior version of this only checked a handful of the ten
+        driven-workflow calls, so most regressions here would print FAIL and
+        still exit 0.
+        """
+        nonlocal failures
+        text, is_error = await registry.call(tool, kwargs)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            payload = {"raw": text}
+        failed = is_error or payload.get("ok") is False
+        failures += failed
+        status = "FAIL" if failed else "ok  "
+        print("  {} {:<24} {}".format(status, tool, str(payload)[:96]))
+        return payload
 
     try:
         print("\ntools advertised over MCP ({} total):".format(len(registry.tools)))
@@ -71,8 +80,7 @@ async def main() -> int:
                 print("  {:<24} {}".format(tool["name"], decision.reason))
 
         print("\ndriving a mock ticket through the tool layer:")
-        issue = await call("gh_get_issue", repo=REPO, number=41)
-        failures += issue.get("ok") is not True
+        await call("gh_get_issue", repo=REPO, number=41)
         await call("gh_set_labels", repo=REPO, number=41, labels=["bug", "sev1"])
         ticket = await call(
             "jira_create_issue",
@@ -104,8 +112,7 @@ async def main() -> int:
         await call("jira_transition", key=ticket.get("key", "ENG-1"), to_status="In Review")
         await call("gh_get_pull_request", repo=REPO, number=pr.get("pull_request", 100))
         await call("repo_list_files", pattern="src/*.py")
-        tests = await call("repo_run_tests", command="python -m pytest -q")
-        failures += tests.get("ok") is not True
+        await call("repo_run_tests", command="python -m pytest -q")
 
         print("\nguardrails (these SHOULD be refused):")
         for tool, args in (
