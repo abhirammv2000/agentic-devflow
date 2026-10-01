@@ -1,7 +1,7 @@
-"""Loop behaviour: suspension on a gated call, resumption, and rejection.
+"""Loop behaviour: pausing on a gated call, resuming, and rejection.
 
-The model is replaced by a scripted sequence of responses and the MCP layer by
-a recording stub, so these tests exercise the orchestration -- not the network.
+The model is replaced by a scripted list of responses and the MCP layer by a recording
+stub, so these tests cover the orchestration and not the network.
 """
 
 from __future__ import annotations
@@ -22,9 +22,7 @@ from orchestrator.store import (  # noqa: E402
 )
 
 
-# --------------------------------------------------------------------------
 # doubles
-# --------------------------------------------------------------------------
 
 class FakeProvider:
     """Replays a scripted list of Turns. Uses the Anthropic message shape, but
@@ -117,9 +115,7 @@ def store(tmp_path):
     return RunStore(tmp_path / "runs")
 
 
-# --------------------------------------------------------------------------
 # tests
-# --------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_read_only_run_completes_without_stopping(store):

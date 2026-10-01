@@ -1,9 +1,8 @@
-"""HTTP surface the n8n workflows drive.
+"""HTTP API that the n8n workflows call.
 
-n8n owns triggers, notification fan-out and the human approval UI; this service
-owns the agent loop, the tool layer and the audit trail. The split matters: the
-approval step is a *workflow* concern, so it lives where a non-engineer can
-rewire it without touching Python.
+n8n handles triggers, notifications and the human approval step. This service runs the
+agent loop, the tools and the audit trail. Approval sits in n8n so that someone who isn't
+an engineer can change it without touching Python.
 """
 
 from __future__ import annotations
@@ -69,9 +68,7 @@ def _engine() -> AgentEngine:
     return engine
 
 
-# --------------------------------------------------------------------------
 # models
-# --------------------------------------------------------------------------
 
 class RunRequest(BaseModel):
     playbook: str
@@ -88,9 +85,7 @@ class ApprovalRequest(BaseModel):
     note: str = ""
 
 
-# --------------------------------------------------------------------------
 # introspection
-# --------------------------------------------------------------------------
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
@@ -131,9 +126,7 @@ async def list_tools() -> dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------
 # runs
-# --------------------------------------------------------------------------
 
 @app.post("/runs", dependencies=[Depends(require_token)])
 async def create_run(req: RunRequest) -> dict[str, Any]:
@@ -218,9 +211,7 @@ async def approve(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
     return run.public()
 
 
-# --------------------------------------------------------------------------
-# trigger adapters -- thin mappings from webhook payloads to playbook runs
-# --------------------------------------------------------------------------
+# trigger adapters: thin mappings from webhook payloads to playbook runs
 
 class GitHubIssueEvent(BaseModel):
     repo: str

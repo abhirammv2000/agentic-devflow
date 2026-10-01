@@ -1,7 +1,7 @@
-"""Open-model backend: any server speaking the OpenAI Chat Completions API.
+"""Backend for open models: any server that speaks the OpenAI Chat Completions API.
 
-Deliberately plain httpx rather than a vendor SDK, because "OpenAI-compatible"
-is the lingua franca of open-weights serving and every runtime below exposes it:
+It uses plain httpx instead of a vendor SDK because this API is what open-weight servers
+all expose:
 
     Ollama      http://localhost:11434/v1     (qwen3, llama3.3, mistral, ...)
     vLLM        http://localhost:8000/v1
@@ -11,10 +11,9 @@ is the lingua franca of open-weights serving and every runtime below exposes it:
     Together    https://api.together.xyz/v1
     Groq        https://api.groq.com/openai/v1
 
-The dialect differences the engine would otherwise have to care about are all
-absorbed here: tools are wrapped in a `function` envelope, arguments arrive as a
-JSON *string* rather than an object, results go back as one `tool` message each
-rather than a batch, and `finish_reason` uses a different vocabulary.
+The differences from the Anthropic format are handled here: tools are wrapped in a
+function envelope, arguments arrive as a JSON string instead of an object, each result
+goes back as its own tool message, and finish_reason uses different names.
 """
 
 from __future__ import annotations

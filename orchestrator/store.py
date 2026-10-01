@@ -1,13 +1,12 @@
-"""Durable run state.
+"""Saved run state.
 
-A run has to survive the gap between "the agent wants to merge" and "a human
-clicked approve in Slack an hour later", and those two moments are different
-HTTP requests -- possibly different processes. So the entire conversation,
-including the pending tool calls, is serialised to disk after every step.
+A run has to survive the gap between "the agent wants to merge" and "a human clicked
+approve in Slack an hour later". Those are two different HTTP requests, maybe in different
+processes, so the whole conversation, pending tool calls included, is written to disk after
+every step.
 
-That requirement is also why the engine drives a manual tool-use loop rather
-than the SDK tool runner: the runner's loop lives in memory for the duration of
-one call, and this one has to be suspendable.
+This is also why the engine runs its own tool-use loop. An SDK tool runner keeps its loop
+in memory for the length of one call, and this one has to be able to pause.
 """
 
 from __future__ import annotations

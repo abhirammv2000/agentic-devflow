@@ -1,12 +1,8 @@
-"""Storage + HTTP backends shared by the three MCP servers.
+"""Storage and HTTP backends shared by the three MCP servers.
 
-Every server runs in one of two modes:
-
-  mock (DEVFLOW_MOCK=1)  -> all state lives in data/mock_state.json
-  live                   -> real GitHub / Jira REST calls via httpx
-
-Mock mode exists so the whole prototype is runnable end-to-end with no
-credentials; the tool surface Claude sees is byte-identical in both modes.
+A server runs in one of two modes. In mock mode (DEVFLOW_MOCK=1) all state is kept in
+data/mock_state.json, so everything runs with no credentials. In live mode it makes real
+GitHub and Jira REST calls with httpx. The tools look the same to the model either way.
 """
 
 from __future__ import annotations
@@ -27,9 +23,7 @@ STATE_FILE = DATA_DIR / "mock_state.json"
 _LOCK = threading.Lock()
 
 
-# --------------------------------------------------------------------------
 # mock store
-# --------------------------------------------------------------------------
 
 def _seed() -> dict[str, Any]:
     return {
@@ -117,9 +111,7 @@ def reset_mock_state() -> None:
     _save(_seed())
 
 
-# --------------------------------------------------------------------------
 # live HTTP clients
-# --------------------------------------------------------------------------
 
 class MissingCredentials(RuntimeError):
     pass

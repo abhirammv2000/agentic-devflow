@@ -1,5 +1,5 @@
-"""Boots the real FastAPI app -- which spawns the three MCP servers over stdio --
-and checks the HTTP contract n8n depends on. No model calls are made.
+"""Starts the real FastAPI app, which spawns the three MCP servers over stdio, and checks the
+HTTP contract n8n relies on. No model calls.
 """
 
 from __future__ import annotations

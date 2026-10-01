@@ -11,13 +11,13 @@ requirement.
 
 n8n is good at what it is good at: webhooks from a dozen SaaS products, retries,
 credential storage, and a visual surface a non-engineer can rewire. The approval
-step is a *workflow* concern — which channel, which reviewers, what the card
+step is a *workflow* concern: which channel, which reviewers, what the card
 looks like, what happens on timeout. Every team wants that different, and none
 of them should need to edit Python to get it.
 
 The agent loop is the opposite: it needs precise control over tool dispatch,
 policy evaluation, message history and persistence. Expressed as n8n nodes it
-becomes an unreadable graph, and the policy — the safety-critical part — ends up
+becomes an unreadable graph, and the policy, the safety-critical part, ends up
 scattered across node parameters where it cannot be unit tested.
 
 So the boundary is HTTP, and it falls where the concerns actually separate.
@@ -63,7 +63,7 @@ ports for free, and it is worth noticing that this falls out of MCP being an
 open standard rather than from anything clever here.
 
 Message histories stay in each provider's native format, and the engine treats
-them as opaque JSON — which is exactly what the suspend/resume design already
+them as opaque JSON, which is exactly what the suspend/resume design already
 required, so the two decisions reinforce each other.
 
 Two concessions to weaker models live in this seam. Unparseable tool arguments
@@ -81,20 +81,20 @@ The SDK's `tool_runner` is the right default and the docs say so. This is the
 documented exception.
 
 A run must be able to stop mid-turn, persist, and be resumed **by a different
-HTTP request** — possibly an hour later, possibly a different process — once a
+HTTP request**, possibly an hour later and possibly in a different process, once a
 human clicks approve. The tool runner's loop lives in memory for the duration of
 one call. Gating inside the tool function would mean blocking a worker for the
 length of a human's lunch break.
 
 So [engine.py](orchestrator/engine.py) drives the turn loop itself and
-serialises the entire conversation — including the pending tool calls — to disk
+serialises the entire conversation, including the pending tool calls, to disk
 after every step. Resumption reconstitutes it and continues.
 
 The consequence worth knowing lives in the Anthropic provider: thinking blocks
 are echoed back verbatim via `model_dump(mode="json", exclude_none=True)`. They
 carry signatures the API validates, so they must round-trip through JSON
 unmodified. The same constraint is why histories stay in native format rather
-than being normalised into some house dialect — a lossy round trip through a
+than being normalised into some house dialect, since a lossy round trip through a
 neutral representation would invalidate them.
 
 ## Why a gated call parks the entire turn
@@ -105,7 +105,7 @@ the gated one. That is wrong.
 
 A turn is a unit of intent. "Create the Jira ticket **and** comment the key on
 the issue" is one plan; executing half of it while a human considers the other
-half produces states the model never reasoned about — an issue comment
+half produces states the model never reasoned about, like an issue comment
 referencing a ticket that was ultimately rejected. So nothing in a turn executes
 until every decision in it is resolved, and rejections come back as error tool
 results that let the model adapt its plan.
@@ -135,33 +135,33 @@ can do through tools it was given. It does nothing about:
 - anyone who can reach the approve URL
 
 Those need process isolation, a container, and webhook authentication
-respectively — listed in the README's limits section rather than pretended away
+respectively. They are listed in the README's limits section rather than pretended away
 here.
 
 ## Testing strategy
 
 Four layers, none of which call a model:
 
-- **[test_policy.py](tests/test_policy.py)** — the decision matrix, the critical
+- **[test_policy.py](tests/test_policy.py)**: the decision matrix, the critical
   floor, fail-closed behaviour, and a check that every tool named by a playbook
   has a classification. That last one catches the failure mode where someone
   adds a tool and it silently becomes `critical` at runtime.
-- **[test_engine.py](tests/test_engine.py)** — the loop, with the model replaced
+- **[test_engine.py](tests/test_engine.py)**: the loop, with the model replaced
   by a scripted sequence of responses and MCP by a recording stub. Suspension,
   resumption, rejection, unanswered approvals, partial-turn safety, iteration caps.
-- **[test_mcp_tools.py](tests/test_mcp_tools.py)** / **[test_api.py](tests/test_api.py)**
-  — the tool implementations against a temp store, and the real FastAPI app with
+- **[test_mcp_tools.py](tests/test_mcp_tools.py)** / **[test_api.py](tests/test_api.py)**:
+  the tool implementations against a temp store, and the real FastAPI app with
   all three MCP servers actually spawned.
-- **[test_providers.py](tests/test_providers.py)** — both dialects over a mocked
+- **[test_providers.py](tests/test_providers.py)**: both dialects over a mocked
   HTTP transport: schema conversion each way, result formatting, stop-reason
   normalisation, and the malformed-arguments path.
 
 `scripts/smoke_test.py` sits alongside them: it drives a complete
-ticket → branch → commit → PR → review sequence through the live MCP layer and
+ticket -> branch -> commit -> PR -> review sequence through the live MCP layer and
 prints what the current autonomy setting would gate. It is the fastest way to
 confirm a change did not quietly widen the tool surface.
 
-What none of this covers is the model's actual behaviour — whether the prompts
+What none of this covers is the model's actual behaviour: whether the prompts
 produce good triage decisions or correct patches. One real run against
 `qwen2.5-coder:7b` (Ollama) showed the gap clearly: the orchestration was
 flawless and the judgement was not, with the model misgrading severity against

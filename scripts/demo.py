@@ -1,8 +1,7 @@
-"""Run a playbook from the terminal, with the approval gate prompting inline.
+"""Run a playbook from the terminal, with the approval gate asking on stdin.
 
-This is the same engine, policy and MCP layer the n8n workflows drive -- only
-the human-in-the-loop transport differs (stdin here, a chat message there). Use
-it to see the whole thing work before wiring up n8n.
+It uses the same engine, policy and MCP layer as the n8n workflows. Only the way the human
+answers differs (stdin here, a chat message there). Try it before setting up n8n.
 
     python scripts/demo.py issue_triage    --repo acme/checkout-service --number 41
     python scripts/demo.py implement_ticket --jira-key ENG-1 --repo acme/checkout-service
@@ -52,7 +51,7 @@ def show_events(run, seen: int) -> int:
                 mark, colour, event["tool"], OFF, DIM, event["arguments"].replace("\n", " ")[:110], OFF
             ))
         elif kind == "tool_denied":
-            print("  {}blocked{} {} -- {}".format(RED, OFF, event["tool"], event["reason"]))
+            print("  {}blocked{} {}: {}".format(RED, OFF, event["tool"], event["reason"]))
         elif kind == "approval_decision":
             verdict = GREEN + "approved" + OFF if event["approved"] else RED + "rejected" + OFF
             print("  {} {} by {}".format(verdict, event["tool"], event["reviewer"]))
@@ -60,7 +59,7 @@ def show_events(run, seen: int) -> int:
 
 
 def ask(run) -> dict[str, bool]:
-    print("\n{}{}PAUSED -- {} action(s) need a human{}".format(
+    print("\n{}{}PAUSED: {} action(s) need a human{}".format(
         BOLD, YELLOW, len(run.pending["approvals"]), OFF))
     if run.summary:
         print(DIM + run.summary + OFF)

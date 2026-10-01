@@ -1,9 +1,8 @@
-"""End-to-end check that does not call the model.
+"""End-to-end check that makes no model calls.
 
-Spawns the three MCP servers over stdio, lists the advertised tools with their
-risk tiers, and drives one full mock ticket -> branch -> commit -> PR -> review
-sequence through the MCP layer. If this passes, everything except the Claude
-call itself is wired correctly.
+Starts the three MCP servers over stdio, lists their tools with the risk tier of each, and
+runs one mock ticket -> branch -> commit -> PR -> review sequence through the MCP layer. If
+it passes, everything except the model call is wired up correctly.
 
     python scripts/smoke_test.py
 """

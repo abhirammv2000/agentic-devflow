@@ -1,9 +1,9 @@
 """Playbooks: the four developer tasks this prototype automates.
 
-A playbook is a name, a system prompt, the subset of MCP tools the agent may
-touch, and how to render the trigger payload into an opening user message.
-Narrowing the tool surface per task is a safety measure as much as a prompting
-one -- the triage playbook physically cannot open a pull request.
+A playbook is a name, a system prompt, the MCP tools the agent may use for that task, and a
+function that turns the trigger payload into the first user message. Limiting the tools per
+task is a safety measure as much as a prompting one. The triage playbook cannot open a
+pull request.
 """
 
 from __future__ import annotations

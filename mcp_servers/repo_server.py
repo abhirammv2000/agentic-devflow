@@ -1,10 +1,10 @@
-"""MCP server giving the agent a sandboxed working copy: read, edit, search,
-diff and a narrowly allow-listed test runner.
+"""MCP server that gives the agent a working copy to read, edit, search and diff, plus a
+short allow-list of test commands.
 
-Everything is confined to DEVFLOW_WORKSPACE. Paths that resolve outside it are
-rejected, and only commands whose first token is on ALLOWED_COMMANDS may run.
+Everything stays inside DEVFLOW_WORKSPACE. Paths that resolve outside it are rejected, and
+only commands whose first token is in ALLOWED_COMMANDS can run.
 
-Run standalone:  python -m mcp_servers.repo_server   (stdio transport)
+Run it on its own with: python -m mcp_servers.repo_server (stdio)
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def repo_search(pattern: str, glob: str = "*") -> dict[str, Any]:
 def repo_write_file(path: str, content: str) -> dict[str, Any]:
     """Create or overwrite a file in the working copy and return the resulting diff.
 
-    Writes stay local -- publishing them is a separate, separately-gated step
+    Writes stay local, and publishing them is a separate, separately-gated step
     (gh_commit_file / gh_open_pull_request).
     """
     try:

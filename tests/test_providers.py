@@ -1,8 +1,7 @@
 """Both model backends, checked against the same MCP tool definitions.
 
-The point of these tests is that the engine's contract holds identically for
-Claude and for an open model behind an OpenAI-compatible server: same tool
-surface in, same normalised Turn out.
+The engine's contract should hold the same for Claude and for an open model behind an
+OpenAI-compatible server: same tool surface in, same normalised Turn out.
 """
 
 from __future__ import annotations
@@ -48,9 +47,7 @@ class FakeSettings:
     max_tokens = 4096
 
 
-# --------------------------------------------------------------------------
 # construction
-# --------------------------------------------------------------------------
 
 def test_build_provider_rejects_an_unknown_backend():
     class S(FakeSettings):
@@ -77,9 +74,7 @@ def test_openai_compat_without_a_base_url_is_an_error():
         build_provider(S())
 
 
-# --------------------------------------------------------------------------
 # tool dialect
-# --------------------------------------------------------------------------
 
 def test_openai_wraps_tools_in_a_function_envelope():
     provider = build_provider(FakeSettings())
@@ -87,7 +82,7 @@ def test_openai_wraps_tools_in_a_function_envelope():
 
     assert tool["type"] == "function"
     assert tool["function"]["name"] == "gh_get_issue"
-    # JSON Schema passes through untouched -- that is why MCP schemas work on
+    # JSON Schema passes through untouched, which is why MCP schemas work on
     # both backends without a translation table.
     assert tool["function"]["parameters"] == MCP_TOOLS[0]["input_schema"]
 
@@ -104,9 +99,7 @@ def test_anthropic_uses_the_flat_input_schema_form():
     assert "function" not in tool
 
 
-# --------------------------------------------------------------------------
 # tool results
-# --------------------------------------------------------------------------
 
 def test_openai_returns_one_tool_message_per_result():
     provider = build_provider(FakeSettings())
@@ -136,9 +129,7 @@ def test_anthropic_batches_results_into_one_user_message():
     assert blocks[1]["is_error"] is True
 
 
-# --------------------------------------------------------------------------
 # response normalisation (mock transport, no server needed)
-# --------------------------------------------------------------------------
 
 def _completion(message: dict, finish_reason: str = "stop") -> dict:
     return {

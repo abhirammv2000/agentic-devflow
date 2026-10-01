@@ -1,20 +1,20 @@
 """The agent loop.
 
-Manual rather than an SDK tool-runner on purpose: a run must be able to stop in
-the middle of a turn, persist itself, and be resumed by a *different* HTTP
-request once a human has approved the pending action. See store.py.
+It is written by hand instead of using an SDK tool runner because a run has to be able to
+stop in the middle of a turn, save itself, and be resumed by a different HTTP request once
+a human approves. See store.py.
 
-Turn structure:
+Each turn goes like this:
 
     model proposes tool calls
-        -> policy.evaluate() each one
-        -> all auto?      execute them, feed results back, keep going
-        -> any needs approval?  persist, notify n8n, return; resume later
-        -> any denied?    feed back an error result and let the model adapt
+        -> policy.evaluate() on each one
+        -> all auto: run them, feed the results back, continue
+        -> any needs approval: save, notify n8n, return, resume later
+        -> any denied: feed back an error and let the model adjust
 
-Nothing here is vendor-specific. The model is reached through a Provider
-(providers/base.py) and the tools through MCP, so swapping Claude for a
-locally-served open-weights model changes configuration, not this file.
+Nothing in here is specific to one vendor. The model is reached through a Provider
+(providers/base.py) and the tools through MCP, so swapping Claude for a local open-weight
+model is a config change.
 """
 
 from __future__ import annotations
@@ -53,9 +53,7 @@ class AgentEngine:
         # Injectable so tests can drive the loop without a model behind it.
         self.provider = provider or providers.build_provider(settings)
 
-    # ------------------------------------------------------------------
     # public entry points
-    # ------------------------------------------------------------------
 
     async def start(
         self, playbook_name: str, inputs: dict[str, Any], autonomy: str | None = None
@@ -127,9 +125,7 @@ class AgentEngine:
         self.store.save(run)
         return await self._loop(run)
 
-    # ------------------------------------------------------------------
     # loop
-    # ------------------------------------------------------------------
 
     async def _loop(self, run: Run) -> Run:
         book = playbooks.get(run.playbook)
@@ -255,9 +251,7 @@ class AgentEngine:
             run.messages.extend(self.provider.tool_result_messages(results))
             self.store.save(run)
 
-    # ------------------------------------------------------------------
     # helpers
-    # ------------------------------------------------------------------
 
     async def _execute(self, run: Run, call: dict[str, Any]) -> ToolResult:
         run.tool_calls += 1

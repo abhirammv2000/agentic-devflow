@@ -1,10 +1,8 @@
-"""Launches the MCP servers over stdio and presents their tools as one flat
-tool surface for the Claude Messages API.
+"""Starts the MCP servers over stdio and puts their tools into one flat list for the model.
 
-MCP is what makes the tool layer swappable: the orchestrator never imports the
-GitHub or Jira code, it only knows "there are servers, they advertise tools".
-Point `settings.mcp_servers` at a vendor's MCP server instead and nothing in the
-engine changes.
+The orchestrator never imports the GitHub or Jira code. It only knows that there are
+servers and that they advertise tools, so pointing settings.mcp_servers at someone else's
+MCP server needs no change to the engine.
 """
 
 from __future__ import annotations

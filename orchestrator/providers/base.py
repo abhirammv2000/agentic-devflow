@@ -1,14 +1,13 @@
-"""The seam between the agent loop and whatever model is behind it.
+"""The boundary between the agent loop and whatever model is behind it.
 
-The engine never imports a vendor SDK. It hands a provider a system prompt, an
-opaque message history and the MCP tool list, and gets back a normalised `Turn`.
-Everything provider-shaped -- tool schema dialect, how an assistant turn is
-represented, how a tool result is fed back, what the stop reasons are called --
-lives behind this interface.
+The engine never imports a vendor SDK. It gives a provider a system prompt, a message
+history it treats as opaque, and the MCP tool list, and gets back a normalised Turn.
+Anything specific to a provider lives behind this interface: the tool schema format, how an
+assistant turn is stored, how a tool result is sent back, and what the stop reasons are
+called.
 
-Message histories stay in each provider's *native* format. The engine treats
-them as opaque JSON, which is what lets a run be serialised to disk mid-turn and
-resumed later (see store.py) without the engine understanding their contents.
+Histories stay in each provider's own format. The engine treats them as plain JSON, which
+is what lets a run be saved to disk mid-turn and resumed later (see store.py).
 """
 
 from __future__ import annotations

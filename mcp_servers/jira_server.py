@@ -1,6 +1,6 @@
-"""MCP server exposing Jira ticketing operations.
+"""MCP server for Jira tickets.
 
-Run standalone:  python -m mcp_servers.jira_server   (stdio transport)
+Run it on its own with: python -m mcp_servers.jira_server (stdio)
 """
 
 from __future__ import annotations

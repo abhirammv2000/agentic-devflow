@@ -1,25 +1,24 @@
-"""Autonomy policy: which tool calls the agent may perform unattended.
+"""Autonomy policy: which tool calls the agent may make without asking.
 
-This module is the whole point of the word "semi" in "semi-autonomous". The
-model proposes tool calls; this decides whether each one executes immediately,
-waits for a human, or is refused outright.
+The model proposes tool calls and this decides whether each one runs now, waits for a
+human, or is refused.
 
-Four risk tiers, increasing:
+Four risk tiers, lowest to highest:
 
-  read      no side effects anywhere
-  write     side effects that stay local or are trivially reversible
-  publish   visible to other humans (PRs, reviews, tickets, comments)
-  critical  irreversible or wide-blast-radius (merges)
+  read      no side effects
+  write     side effects that stay local or are easy to undo
+  publish   visible to other people (PRs, reviews, tickets, comments)
+  critical  irreversible or wide blast radius (merges)
 
-Three autonomy levels map onto them:
+Three autonomy levels:
 
   supervised  auto-run read only
-  semi        auto-run read + write            <- default
-  autonomous  auto-run read + write + publish
+  semi        auto-run read and write            <- default
+  autonomous  auto-run read, write and publish
 
-`critical` always needs a human, at every autonomy level. That floor is not
-configurable on purpose -- an autonomy setting is a knob someone can nudge in
-a .env file, and "merge to main" should not be one nudge away.
+critical always needs a human, at every level. That floor is deliberately not
+configurable, because an autonomy setting is something someone changes in a .env file and
+"merge to main" should not be one edit away.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ CRITICAL = "critical"
 TIER_ORDER = [READ, WRITE, PUBLISH, CRITICAL]
 
 TOOL_TIERS: dict[str, str] = {
-    # --- read -------------------------------------------------------------
+    # read
     "gh_list_issues": READ,
     "gh_get_issue": READ,
     "gh_get_file": READ,
@@ -46,12 +45,12 @@ TOOL_TIERS: dict[str, str] = {
     "repo_search": READ,
     "repo_diff": READ,
     "repo_run_tests": READ,
-    # --- write ------------------------------------------------------------
+    # write
     "gh_create_branch": WRITE,
     "gh_commit_file": WRITE,
     "gh_set_labels": WRITE,
     "repo_write_file": WRITE,
-    # --- publish ----------------------------------------------------------
+    # publish
     "gh_comment_issue": PUBLISH,
     "gh_open_pull_request": PUBLISH,
     "gh_review_pull_request": PUBLISH,
@@ -59,7 +58,7 @@ TOOL_TIERS: dict[str, str] = {
     "jira_comment": PUBLISH,
     "jira_transition": PUBLISH,
     "jira_link_pull_request": PUBLISH,
-    # --- critical ---------------------------------------------------------
+    # critical
     "gh_merge_pull_request": CRITICAL,
 }
 
@@ -82,7 +81,7 @@ class Decision:
 
 
 def tier_of(tool_name: str) -> str:
-    """Unknown tools are treated as critical -- the policy fails closed."""
+    """Unknown tools are treated as critical, so the policy fails closed."""
     return TOOL_TIERS.get(tool_name, CRITICAL)
 
 
@@ -112,7 +111,7 @@ def evaluate(
         return Decision(
             DECISION_APPROVAL,
             tier,
-            "irreversible action -- human approval is always required",
+            "irreversible action, human approval is always required",
         )
 
     ceiling = AUTO_CEILING.get(autonomy, WRITE)

@@ -1,6 +1,6 @@
-"""MCP server exposing the GitHub operations the dev-flow agent is allowed to perform.
+"""MCP server for the GitHub operations the agent is allowed to do.
 
-Run standalone:  python -m mcp_servers.github_server   (stdio transport)
+Run it on its own with: python -m mcp_servers.github_server (stdio)
 """
 
 from __future__ import annotations
@@ -21,9 +21,7 @@ def _repo(state: dict[str, Any], repo: str) -> dict[str, Any] | None:
     return state["github"]["repos"].get(repo)
 
 
-# --------------------------------------------------------------------------
 # read
-# --------------------------------------------------------------------------
 
 @server.tool()
 def gh_list_issues(repo: str, state: str = "open") -> dict[str, Any]:
@@ -113,7 +111,7 @@ def gh_get_file(repo: str, path: str, ref: str = "") -> dict[str, Any]:
 
 @server.tool()
 def gh_get_pull_request(repo: str, number: int) -> dict[str, Any]:
-    """Fetch a pull request's metadata and unified diff -- the input to a code review."""
+    """Fetch a pull request's metadata and unified diff, the input to a code review."""
     if MOCK:
         r = _repo(store.read(), repo)
         if r is None or str(number) not in r["pulls"]:
@@ -139,9 +137,7 @@ def gh_get_pull_request(repo: str, number: int) -> dict[str, Any]:
         })
 
 
-# --------------------------------------------------------------------------
 # write
-# --------------------------------------------------------------------------
 
 @server.tool()
 def gh_comment_issue(repo: str, number: int, body: str) -> dict[str, Any]:
@@ -348,14 +344,12 @@ def gh_review_pull_request(repo: str, number: int, event: str, body: str) -> dic
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            # GitHub allows a COMMENT-type review on your own pull request but
-            # rejects APPROVE/REQUEST_CHANGES on it with this specific 422.
-            # A demo/portfolio run is commonly against a repo the agent's own
-            # token owns, so this is the realistic case, not an edge case:
-            # discovered by actually running this against a real PR, not
-            # something the mock backend could ever have surfaced. Falling
-            # back to a plain comment keeps the findings published instead of
-            # the whole run failing on a GitHub policy the agent can't change.
+            # GitHub allows a COMMENT review on your own pull request but rejects
+            # APPROVE and REQUEST_CHANGES with a 422. A demo run is often against a
+            # repo the agent's own token owns, so this is a normal case. The mock
+            # backend never showed it, I only hit it running against a real PR.
+            # Falling back to a plain comment keeps the findings published instead
+            # of failing the run on a rule the agent can't change.
             if resp.status_code == 422 and "own pull request" in resp.text.lower():
                 c.post(
                     "/repos/{}/issues/{}/comments".format(repo, number),
@@ -374,7 +368,7 @@ def gh_review_pull_request(repo: str, number: int, event: str, body: str) -> dic
 
 @server.tool()
 def gh_merge_pull_request(repo: str, number: int, method: str = "squash") -> dict[str, Any]:
-    """Merge a pull request. Irreversible -- always gated behind human approval."""
+    """Merge a pull request. Irreversible, so it is always gated behind human approval."""
     if MOCK:
         def _do(state):
             r = _repo(state, repo)
