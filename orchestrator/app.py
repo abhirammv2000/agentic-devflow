@@ -8,6 +8,7 @@ an engineer can change it without touching Python.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -35,6 +36,11 @@ async def lifespan(_: FastAPI):
     global engine
     await registry.start()
     engine = AgentEngine(registry, run_store)
+    if settings.service_token == DEFAULT_TOKEN:
+        log.warning(
+            "DEVFLOW_SERVICE_TOKEN is the public default, so anyone who can reach this "
+            "service can start runs. Set your own before exposing it."
+        )
     log.info(
         "devflow ready | %s model=%s autonomy=%s mock=%s tools=%d",
         settings.provider,
@@ -57,8 +63,12 @@ app = FastAPI(
 )
 
 
+DEFAULT_TOKEN = "dev-local-token"
+
+
 def require_token(x_devflow_token: str = Header(default="")) -> None:
-    if x_devflow_token != settings.service_token:
+    # compare_digest takes the same time however many leading characters match
+    if not hmac.compare_digest(x_devflow_token.encode(), settings.service_token.encode()):
         raise HTTPException(status_code=401, detail="bad or missing X-Devflow-Token")
 
 
@@ -160,6 +170,12 @@ async def _background(eng: AgentEngine, req: RunRequest, placeholder_id: str) ->
 @app.get("/runs", dependencies=[Depends(require_token)])
 async def list_runs(limit: int = 50) -> dict[str, Any]:
     return {"runs": run_store.list(limit)}
+
+
+@app.get("/usage", dependencies=[Depends(require_token)])
+async def usage() -> dict[str, Any]:
+    """Token use across all runs. Set the DEVFLOW_*_PRICE_PER_MTOK variables for a cost estimate."""
+    return run_store.usage_summary(settings.input_price_per_mtok, settings.output_price_per_mtok)
 
 
 @app.get("/runs/{run_id}", dependencies=[Depends(require_token)])

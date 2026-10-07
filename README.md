@@ -23,7 +23,7 @@ pip install -r requirements.txt
 cp .env.example .env                               # set ANTHROPIC_API_KEY
 
 python scripts/smoke_test.py                       # no model calls, checks MCP and policy
-python -m pytest -q                                # 56 tests
+python -m pytest -q                                # 65 tests
 
 python scripts/demo.py issue_triage --repo acme/checkout-service --number 41
 ```
@@ -83,6 +83,12 @@ What has actually been run:
 - **Claude, live:** `review_pr` against [a real sandbox pull request](https://github.com/abhirammv2000/devflow-sandbox/pull/1). It found the planted double-charge bug and two smaller defects. It also hit something the mock never showed: GitHub rejects `APPROVE` on your own PR with a 422, so the tool now falls back to a plain comment.
 - **A local 7B model:** `issue_triage` completed end to end on `qwen2.5-coder:7b` through Ollama, and the approval gate held. Across two runs it rated the same bug sev2 once and sev1 once, so a small model works mechanically but not reliably.
 
+## Usage and cost
+
+Every run records its input and output tokens. `GET /usage` (with the `X-Devflow-Token` header) adds them up overall and per playbook. Set `DEVFLOW_INPUT_PRICE_PER_MTOK` and `DEVFLOW_OUTPUT_PRICE_PER_MTOK` (dollars per million tokens, from your provider's price list) to get an estimated cost. Without them the cost shows as `null`, because the right price depends on the model you use. Calls to a local model have no cost, only tokens.
+
+The API checks `X-Devflow-Token` against `DEVFLOW_SERVICE_TOKEN`. The default token is public, and the service logs a warning at startup until you set your own.
+
 ## Running with n8n
 
 ```bash
@@ -109,4 +115,4 @@ scripts/           demo CLI, smoke test, reset
 - Only GitHub has been run live. Jira has only been run against the mock backend.
 - The test runner is limited by an allow-list, not a real sandbox. Put it in a container before pointing it at code you don't trust.
 - The approve and reject links in workflow 04 are unauthenticated.
-- The 56 tests check the loop, policy, MCP layer, HTTP contract and both model formats. Nothing yet measures whether the agent's decisions are good.
+- The 65 tests check the loop, policy, MCP layer, HTTP contract and both model formats. Nothing yet measures whether the agent's decisions are good.

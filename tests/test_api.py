@@ -73,3 +73,22 @@ def test_missing_required_input_is_422(client):
 def test_unknown_run_is_404(client):
     assert client.get("/runs/run_nope", headers=AUTH).status_code == 404
     assert client.post("/runs/run_nope/approve", json={}, headers=AUTH).status_code == 404
+
+
+def test_usage_needs_the_token(client):
+    assert client.get("/usage").status_code == 401
+    assert client.get("/usage", headers={"X-Devflow-Token": "wrong"}).status_code == 401
+
+
+def test_usage_returns_totals_with_the_token(client):
+    response = client.get("/usage", headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"total", "by_playbook"}
+    assert {"runs", "input_tokens", "output_tokens", "estimated_cost_usd"} <= set(body["total"])
+
+
+def test_a_token_that_only_shares_a_prefix_is_refused(client):
+    almost = settings.service_token[:-1]
+    assert client.get("/runs", headers={"X-Devflow-Token": almost}).status_code == 401
+    assert client.get("/runs", headers={"X-Devflow-Token": settings.service_token + "x"}).status_code == 401

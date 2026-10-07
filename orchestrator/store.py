@@ -103,6 +103,41 @@ class RunStore:
             return None
         return Run(**json.loads(path.read_text(encoding="utf-8")))
 
+    def usage_summary(self, input_price: float = 0.0, output_price: float = 0.0) -> dict[str, Any]:
+        """Token totals over every saved run, overall and per playbook.
+
+        Prices are dollars per million tokens. With both at zero no cost is
+        estimated and the cost fields are None.
+        """
+        by_playbook: dict[str, dict[str, int]] = {}
+        for path in self.dir.glob("run_*.json"):
+            run = Run(**json.loads(path.read_text(encoding="utf-8")))
+            entry = by_playbook.setdefault(
+                run.playbook, {"runs": 0, "input_tokens": 0, "output_tokens": 0}
+            )
+            entry["runs"] += 1
+            entry["input_tokens"] += run.usage.get("input_tokens", 0)
+            entry["output_tokens"] += run.usage.get("output_tokens", 0)
+
+        def with_cost(entry: dict[str, int]) -> dict[str, Any]:
+            cost = None
+            if input_price or output_price:
+                cost = round(
+                    entry["input_tokens"] / 1e6 * input_price
+                    + entry["output_tokens"] / 1e6 * output_price,
+                    4,
+                )
+            return {**entry, "estimated_cost_usd": cost}
+
+        total = {"runs": 0, "input_tokens": 0, "output_tokens": 0}
+        for entry in by_playbook.values():
+            for key in total:
+                total[key] += entry[key]
+        return {
+            "total": with_cost(total),
+            "by_playbook": {name: with_cost(e) for name, e in sorted(by_playbook.items())},
+        }
+
     def list(self, limit: int = 50) -> list[dict[str, Any]]:
         paths = sorted(self.dir.glob("run_*.json"), key=lambda p: p.stat().st_mtime,
                        reverse=True)

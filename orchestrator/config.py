@@ -56,6 +56,11 @@ class Settings:
     max_iterations: int = _int("DEVFLOW_MAX_ITERATIONS", 25)
     max_tool_calls: int = _int("DEVFLOW_MAX_TOOL_CALLS", 60)
 
+    # Dollars per million tokens, used only to estimate cost in /usage. Left at 0
+    # the estimate is not shown, because the right price depends on your model.
+    input_price_per_mtok: float = _float("DEVFLOW_INPUT_PRICE_PER_MTOK", 0.0)
+    output_price_per_mtok: float = _float("DEVFLOW_OUTPUT_PRICE_PER_MTOK", 0.0)
+
     data_dir: Path = Path(os.getenv("DEVFLOW_DATA_DIR", "./data")).resolve()
     workspace: Path = Path(os.getenv("DEVFLOW_WORKSPACE", "./sandbox/demo-repo")).resolve()
     mock: bool = os.getenv("DEVFLOW_MOCK", "1") == "1"
