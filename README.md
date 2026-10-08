@@ -67,7 +67,7 @@ Four risk tiers and three autonomy levels ([policy.py](orchestrator/policy.py)):
 - A tool nobody classified is treated as `critical`, so adding an MCP server cannot quietly widen what runs unattended.
 - If the model proposes five calls at once and one needs approval, none of them run until the decision comes back.
 
-All three are covered by tests. [ARCHITECTURE.md](ARCHITECTURE.md) explains why the agent loop is hand-written instead of using an SDK tool runner.
+All three are covered by tests. [ARCHITECTURE.md](ARCHITECTURE.md) explains why the agent loop is hand-written instead of using an SDK tool runner, and [docs/INTERVIEW.md](docs/INTERVIEW.md) has the design questions I expect and what I measured.
 
 ## Prompt injection
 
