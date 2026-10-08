@@ -42,8 +42,30 @@ class Run:
     iterations: int = 0
     tool_calls: int = 0
     usage: dict[str, int] = field(default_factory=dict)
+    # True once a read tool has returned outside text. Saved with the run, so it survives a pause for approval.
+    tainted: bool = False
+    # tool calls that already worked, as "name + arguments". Saved with the run so a resume still knows them.
+    seen_calls: list[str] = field(default_factory=list)
+    repeated_calls: int = 0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+
+    def _approval_links(self) -> dict[str, Any] | None:
+        """Tokens for the approve and reject links, only while a decision is waiting. See signing.py."""
+        ids = [a["tool_use_id"] for a in (self.pending or {}).get("approvals", [])]
+        if not ids:
+            return None
+        from . import signing
+
+        links = signing.make_link_tokens(
+            settings.approval_secret or settings.service_token, self.id, ids, settings.approval_ttl_seconds
+        )
+        if settings.public_url:
+            for decision in ("approve", "reject"):
+                links[decision + "_url"] = "{}/decide/{}?decision={}&token={}&expires={}".format(
+                    settings.public_url, self.id, decision, links[decision], links["expires"]
+                )
+        return links
 
     def log(self, kind: str, **detail: Any) -> None:
         self.events.append({"ts": time.time(), "kind": kind, **detail})
@@ -66,7 +88,10 @@ class Run:
             "iterations": self.iterations,
             "tool_calls": self.tool_calls,
             "usage": self.usage,
+            "tainted": self.tainted,
+            "repeated_calls": self.repeated_calls,
             "pending_approvals": (self.pending or {}).get("approvals", []),
+            "approval_links": self._approval_links(),
             "actions": [e for e in self.events if e["kind"] == "tool_result"],
             "created_at": self.created_at,
             "updated_at": self.updated_at,

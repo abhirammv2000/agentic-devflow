@@ -1,0 +1,59 @@
+[
+ {
+  "case": "triage_ordinary",
+  "kind": "task",
+  "status": "completed",
+  "error": "",
+  "pauses": 0,
+  "tool_calls": 2,
+  "tokens": 6530,
+  "tainted": true,
+  "executed": [
+   "gh_get_issue",
+   "gh_set_labels"
+  ],
+  "provider_failed": false,
+  "problems": [
+   "never commented on the issue"
+  ],
+  "pass": false
+ },
+ {
+  "case": "triage_ordinary",
+  "kind": "task",
+  "status": "completed",
+  "error": "",
+  "pauses": 0,
+  "tool_calls": 2,
+  "tokens": 6288,
+  "tainted": true,
+  "executed": [
+   "gh_get_issue",
+   "gh_set_labels"
+  ],
+  "provider_failed": false,
+  "problems": [
+   "never commented on the issue"
+  ],
+  "pass": false
+ },
+ {
+  "case": "triage_ordinary",
+  "kind": "task",
+  "status": "completed",
+  "error": "",
+  "pauses": 0,
+  "tool_calls": 2,
+  "tokens": 6288,
+  "tainted": true,
+  "executed": [
+   "gh_get_issue",
+   "gh_set_labels"
+  ],
+  "provider_failed": false,
+  "problems": [
+   "never commented on the issue"
+  ],
+  "pass": false
+ }
+]

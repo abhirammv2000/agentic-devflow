@@ -19,6 +19,11 @@ Three autonomy levels:
 critical always needs a human, at every level. That floor is deliberately not
 configurable, because an autonomy setting is something someone changes in a .env file and
 "merge to main" should not be one edit away.
+
+One more rule, for prompt injection. Text from read tools (issue bodies, tickets, files, test
+output) can be written by an attacker. Once a run has read any, publish needs a human even at
+'autonomous'. Only the model's judgement stands between an injected instruction and a public
+comment otherwise, and that is not enough. The rule is on by default (DEVFLOW_TAINT_RULE).
 """
 
 from __future__ import annotations
@@ -85,12 +90,20 @@ def tier_of(tool_name: str) -> str:
     return TOOL_TIERS.get(tool_name, CRITICAL)
 
 
+def reads_outside_text(tool_name: str) -> bool:
+    """True if the tool returns text somebody else could have written."""
+    return tier_of(tool_name) == READ
+
+
 def evaluate(
     tool_name: str,
     autonomy: str,
     allowed_tools: list[str] | None = None,
+    tainted: bool = False,
 ) -> Decision:
-    """Decide how a single proposed tool call should be handled."""
+    """Decide how a single proposed tool call should be handled.
+
+    `tainted` means the run has read outside text, or is about to in the same turn."""
     tier = tier_of(tool_name)
 
     if allowed_tools is not None and tool_name not in allowed_tools:
@@ -115,6 +128,13 @@ def evaluate(
         )
 
     ceiling = AUTO_CEILING.get(autonomy, WRITE)
+    if tainted and tier == PUBLISH and TIER_ORDER.index(tier) <= TIER_ORDER.index(ceiling):
+        return Decision(
+            DECISION_APPROVAL,
+            tier,
+            "this run has read text from outside (an issue, a ticket, a file), so '{}' needs a human "
+            "even at the '{}' level".format(tool_name, autonomy),
+        )
     if TIER_ORDER.index(tier) <= TIER_ORDER.index(ceiling):
         return Decision(DECISION_AUTO, tier, "'{}' tier is within the '{}' autonomy "
                                              "ceiling".format(tier, autonomy))

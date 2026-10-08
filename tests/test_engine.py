@@ -300,7 +300,8 @@ async def test_runaway_loop_hits_the_iteration_cap(store, monkeypatch):
     engine = ScriptedEngine(
         registry,
         store,
-        [tool_turn(("t%d" % i, "gh_get_issue", {"repo": "a/b", "number": 41}))
+        # a different issue each time, so this is the iteration cap and not the repeated-call guard
+        [tool_turn(("t%d" % i, "gh_get_issue", {"repo": "a/b", "number": 41 + i}))
          for i in range(10)],
     )
 

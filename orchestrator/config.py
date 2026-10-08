@@ -55,6 +55,21 @@ class Settings:
     autonomy: str = os.getenv("DEVFLOW_AUTONOMY", "semi")
     max_iterations: int = _int("DEVFLOW_MAX_ITERATIONS", 25)
     max_tool_calls: int = _int("DEVFLOW_MAX_TOOL_CALLS", 60)
+    # the same call (same tool, same arguments) after it already worked is refused. This many refusals in
+    # one run and the run stops, because the model is stuck. A small local model did this in the first eval.
+    max_repeated_calls: int = _int("DEVFLOW_MAX_REPEATED_CALLS", 3)
+    # input plus output tokens in one run, so a confused model cannot spend without end
+    max_run_tokens: int = _int("DEVFLOW_MAX_RUN_TOKENS", 400_000)
+    # publish needs approval once a run has read outside text, even at 'autonomous'. See policy.py.
+    taint_rule: bool = os.getenv("DEVFLOW_TAINT_RULE", "1") != "0"
+    # Signs the approve and reject links. Falls back to the service token. See signing.py.
+    approval_secret: str = os.getenv("DEVFLOW_APPROVAL_SECRET", "")
+    approval_ttl_seconds: int = _int("DEVFLOW_APPROVAL_TTL_SECONDS", 3600)
+    # Where reviewers can reach this service. When set, the approval card links to the confirm page here
+    # (/decide/...) instead of straight to n8n. See decide_page.py.
+    public_url: str = os.getenv("DEVFLOW_PUBLIC_URL", "").rstrip("/")
+    # POST /runs and the trigger routes, per minute
+    runs_per_minute: int = _int("DEVFLOW_RUNS_PER_MINUTE", 30)
 
     # Dollars per million tokens, used only to estimate cost in /usage. Left at 0
     # the estimate is not shown, because the right price depends on your model.

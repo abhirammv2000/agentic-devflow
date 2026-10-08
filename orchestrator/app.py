@@ -10,16 +10,20 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+from urllib.parse import parse_qs
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from . import playbooks
+from . import decide_page, playbooks, signing, telemetry
 from .config import settings
 from .engine import AgentEngine
 from .mcp_registry import registry
+from .ratelimit import RateLimiter
 from .store import STATUS_AWAITING_APPROVAL, RunStore
 
 logging.basicConfig(
@@ -29,11 +33,13 @@ log = logging.getLogger("devflow.api")
 
 run_store = RunStore()
 engine: AgentEngine | None = None
+run_limiter = RateLimiter(lambda: settings.runs_per_minute)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global engine
+    telemetry.configure()
     await registry.start()
     engine = AgentEngine(registry, run_store)
     if settings.service_token == DEFAULT_TOKEN:
@@ -72,6 +78,16 @@ def require_token(x_devflow_token: str = Header(default="")) -> None:
         raise HTTPException(status_code=401, detail="bad or missing X-Devflow-Token")
 
 
+def limit_runs() -> None:
+    wait = run_limiter.check()
+    if wait is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="too many runs started in the last minute",
+            headers={"Retry-After": str(wait)},
+        )
+
+
 def _engine() -> AgentEngine:
     if engine is None:
         raise HTTPException(status_code=503, detail="orchestrator is still starting")
@@ -93,6 +109,11 @@ class ApprovalRequest(BaseModel):
     reject_all: bool = False
     reviewer: str = "human"
     note: str = ""
+    # "link" means the click came through the public approval link, which is not authenticated by itself,
+    # so the signed token is required. "api" is a caller that already holds the service token.
+    source: Literal["api", "link"] = "api"
+    token: str | None = None
+    expires: int | None = None
 
 
 # introspection
@@ -138,7 +159,7 @@ async def list_tools() -> dict[str, Any]:
 
 # runs
 
-@app.post("/runs", dependencies=[Depends(require_token)])
+@app.post("/runs", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def create_run(req: RunRequest) -> dict[str, Any]:
     eng = _engine()
     try:
@@ -170,6 +191,12 @@ async def _background(eng: AgentEngine, req: RunRequest, placeholder_id: str) ->
 @app.get("/runs", dependencies=[Depends(require_token)])
 async def list_runs(limit: int = 50) -> dict[str, Any]:
     return {"runs": run_store.list(limit)}
+
+
+@app.get("/metrics", dependencies=[Depends(require_token)])
+async def metrics() -> Response:
+    """Prometheus metrics: runs, tool decisions, approvals, tokens and run time. Never any issue or file text."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/usage", dependencies=[Depends(require_token)])
@@ -216,6 +243,21 @@ async def approve(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
     else:
         decisions = req.decisions
 
+    if req.source == "link":
+        if req.approve_all == req.reject_all:
+            raise HTTPException(status_code=422, detail="an approval link is all or nothing")
+        reason = signing.check_link_token(
+            settings.approval_secret or settings.service_token,
+            run_id,
+            "approve" if req.approve_all else "reject",
+            pending_ids,
+            req.expires,
+            req.token,
+        )
+        if reason:
+            log.warning("approval link refused for %s: %s", run_id, reason)
+            raise HTTPException(status_code=403, detail="invalid or expired approval link")
+
     unknown = set(decisions) - set(pending_ids)
     if unknown:
         raise HTTPException(
@@ -225,6 +267,64 @@ async def approve(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
 
     run = await eng.resume(run, decisions, reviewer=req.reviewer, note=req.note)
     return run.public()
+
+
+# the confirm page behind the approve and reject links. These routes have no service token, because the
+# reviewer who opens them does not have one. The signed token in the link is what authorises them.
+
+def _page(html: str, status_code: int = 200) -> HTMLResponse:
+    return HTMLResponse(html, status_code=status_code, headers=decide_page.SECURITY_HEADERS)
+
+
+def _link_problem(run, decision: str, token: str, expires: int | None) -> tuple[int, str] | None:
+    """A (status, message) if this link cannot be used, else None. The message is the same for a missing run, a
+    run that is not waiting and a bad token, so a page cannot be used to find out which run ids exist."""
+    unusable = (404, "This link is no longer valid. The run may have been decided already, or the link has expired.")
+    if decision not in ("approve", "reject") or run is None or run.status != STATUS_AWAITING_APPROVAL:
+        return unusable
+    pending_ids = [a["tool_use_id"] for a in (run.pending or {}).get("approvals", [])]
+    reason = signing.check_link_token(settings.approval_secret or settings.service_token, run.id, decision,
+                                      pending_ids, expires, token)
+    if reason:
+        log.warning("decision page refused for %s: %s", run.id, reason)
+        return unusable
+    return None
+
+
+@app.get("/decide/{run_id}", response_class=HTMLResponse)
+async def decide_page_get(run_id: str, decision: str = "approve", token: str = "", expires: int | None = None):
+    """Show what is waiting and a button. Deciding happens on POST, so a link preview cannot approve anything."""
+    run = run_store.load(run_id)
+    problem = _link_problem(run, decision, token, expires)
+    if problem:
+        return _page(decide_page.message("Link not valid", problem[1]), problem[0])
+    return _page(decide_page.confirm(run.public(), decision, token, expires))
+
+
+@app.post("/decide/{run_id}", response_class=HTMLResponse)
+async def decide_page_post(run_id: str, request: Request):
+    raw = await request.body()
+    if len(raw) > 4096:
+        return _page(decide_page.message("Too large", "That request is too large."), 413)
+    form = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", errors="replace")).items()}
+    decision = form.get("decision", "")
+    try:
+        expires = int(form.get("expires", ""))
+    except ValueError:
+        expires = None
+    run = run_store.load(run_id)
+    problem = _link_problem(run, decision, form.get("token", ""), expires)
+    if problem:
+        return _page(decide_page.message("Link not valid", problem[1]), problem[0])
+
+    reviewer = (form.get("reviewer", "").strip()[:60]) or "link-click"
+    req = ApprovalRequest(approve_all=decision == "approve", reject_all=decision == "reject", reviewer=reviewer,
+                          source="link", token=form.get("token"), expires=expires)
+    try:
+        result = await approve(run_id, req)
+    except HTTPException as exc:
+        return _page(decide_page.message("Not recorded", str(exc.detail)), exc.status_code)
+    return _page(decide_page.done(result))
 
 
 # trigger adapters: thin mappings from webhook payloads to playbook runs
@@ -246,19 +346,19 @@ class JiraEvent(BaseModel):
     branch: str | None = None
 
 
-@app.post("/triggers/github-issue", dependencies=[Depends(require_token)])
+@app.post("/triggers/github-issue", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def trigger_issue(evt: GitHubIssueEvent) -> dict[str, Any]:
     run = await _engine().start("issue_triage", evt.model_dump())
     return run.public()
 
 
-@app.post("/triggers/github-pr", dependencies=[Depends(require_token)])
+@app.post("/triggers/github-pr", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def trigger_pr(evt: GitHubPREvent) -> dict[str, Any]:
     run = await _engine().start("review_pr", evt.model_dump())
     return run.public()
 
 
-@app.post("/triggers/jira-ticket", dependencies=[Depends(require_token)])
+@app.post("/triggers/jira-ticket", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def trigger_jira(evt: JiraEvent) -> dict[str, Any]:
     inputs = {k: v for k, v in evt.model_dump().items() if v is not None}
     run = await _engine().start("implement_ticket", inputs)
