@@ -50,6 +50,17 @@ class Run:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
+    def _approval_links(self) -> dict[str, Any] | None:
+        """Tokens for the approve and reject links, only while a decision is waiting. See signing.py."""
+        ids = [a["tool_use_id"] for a in (self.pending or {}).get("approvals", [])]
+        if not ids:
+            return None
+        from . import signing
+
+        return signing.make_link_tokens(
+            settings.approval_secret or settings.service_token, self.id, ids, settings.approval_ttl_seconds
+        )
+
     def log(self, kind: str, **detail: Any) -> None:
         self.events.append({"ts": time.time(), "kind": kind, **detail})
 
@@ -74,6 +85,7 @@ class Run:
             "tainted": self.tainted,
             "repeated_calls": self.repeated_calls,
             "pending_approvals": (self.pending or {}).get("approvals", []),
+            "approval_links": self._approval_links(),
             "actions": [e for e in self.events if e["kind"] == "tool_result"],
             "created_at": self.created_at,
             "updated_at": self.updated_at,

@@ -11,13 +11,13 @@ import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from . import playbooks, telemetry
+from . import playbooks, signing, telemetry
 from .config import settings
 from .engine import AgentEngine
 from .mcp_registry import registry
@@ -107,6 +107,11 @@ class ApprovalRequest(BaseModel):
     reject_all: bool = False
     reviewer: str = "human"
     note: str = ""
+    # "link" means the click came through the public approval link, which is not authenticated by itself,
+    # so the signed token is required. "api" is a caller that already holds the service token.
+    source: Literal["api", "link"] = "api"
+    token: str | None = None
+    expires: int | None = None
 
 
 # introspection
@@ -235,6 +240,21 @@ async def approve(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
         decisions = {i: False for i in pending_ids}
     else:
         decisions = req.decisions
+
+    if req.source == "link":
+        if req.approve_all == req.reject_all:
+            raise HTTPException(status_code=422, detail="an approval link is all or nothing")
+        reason = signing.check_link_token(
+            settings.approval_secret or settings.service_token,
+            run_id,
+            "approve" if req.approve_all else "reject",
+            pending_ids,
+            req.expires,
+            req.token,
+        )
+        if reason:
+            log.warning("approval link refused for %s: %s", run_id, reason)
+            raise HTTPException(status_code=403, detail="invalid or expired approval link")
 
     unknown = set(decisions) - set(pending_ids)
     if unknown:

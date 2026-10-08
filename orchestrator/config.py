@@ -62,6 +62,9 @@ class Settings:
     max_run_tokens: int = _int("DEVFLOW_MAX_RUN_TOKENS", 400_000)
     # publish needs approval once a run has read outside text, even at 'autonomous'. See policy.py.
     taint_rule: bool = os.getenv("DEVFLOW_TAINT_RULE", "1") != "0"
+    # Signs the approve and reject links. Falls back to the service token. See signing.py.
+    approval_secret: str = os.getenv("DEVFLOW_APPROVAL_SECRET", "")
+    approval_ttl_seconds: int = _int("DEVFLOW_APPROVAL_TTL_SECONDS", 3600)
     # POST /runs and the trigger routes, per minute
     runs_per_minute: int = _int("DEVFLOW_RUNS_PER_MINUTE", 30)
 
