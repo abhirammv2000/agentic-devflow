@@ -23,7 +23,7 @@ pip install -r requirements.txt
 cp .env.example .env                               # set ANTHROPIC_API_KEY
 
 python scripts/smoke_test.py                       # no model calls, checks MCP and policy
-python -m pytest -q                                # 130 tests
+python -m pytest -q                                # 149 tests
 
 python scripts/demo.py issue_triage --repo acme/checkout-service --number 41
 ```
@@ -146,7 +146,7 @@ scripts/           demo CLI, smoke test, reset
 - Run state is stored as JSON files, which is fine for one process and not for several.
 - Only GitHub has been run live. Jira has only been run against the mock backend.
 - The test runner is limited by an allow-list, not a real sandbox. Put it in a container before pointing it at code you don't trust.
-- The approve and reject links in workflow 04 are signed and expire, but anyone holding one can use it until then. A chat app that previews links would count as a click, so put a confirm page in front before using Slack unfurling.
-- The 130 tests check the loop, policy, injection defences, signed approval links, MCP layer, HTTP contract and both model formats. The evals are written and have run once, on a 7B local model. They have not run on a stronger model.
+- The approve and reject links in workflow 04 are signed and expire, but anyone holding one can use it until then. Set `DEVFLOW_PUBLIC_URL` so the links go to the orchestrator's confirm page, where a link preview cannot approve anything. Without it they go to the n8n webhook, which decides on a plain GET.
+- The 149 tests check the loop, policy, injection defences, signed approval links, MCP layer, HTTP contract and both model formats. The evals are written and have run once, on a 7B local model. They have not run on a stronger model.
 - The taint rule counts every read as outside text, so at `autonomous` almost every publish waits for a person. That is the point, but it makes `autonomous` close to `semi` for publishing.
 - The rate limit and the metrics are per process.

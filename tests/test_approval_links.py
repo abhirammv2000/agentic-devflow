@@ -241,6 +241,12 @@ def test_the_workflow_builds_links_that_carry_the_orchestrators_tokens(tmp_path)
     assert output["approveUrl"] == "http://n8n/webhook/devflow-approve?run_id=run_abc&decision=approve&token=" + "A" * 64 + "&expires=1234567890"
     assert output["rejectUrl"].endswith("decision=reject&token=" + "R" * 64 + "&expires=1234567890")
 
+    # when the orchestrator has a public URL it sends ready-made links to its confirm page, and the card uses them
+    with_urls = {**run, "approval_links": {**run["approval_links"], "approve_url": "http://orch/decide/run_abc?x=1", "reject_url": "http://orch/decide/run_abc?x=2"}}
+    script.write_text(card_script(with_urls, code), encoding="utf-8")
+    ready = json.loads(subprocess.run(["node", str(script)], capture_output=True, text=True, check=True).stdout)[0]["json"]
+    assert ready["approveUrl"] == "http://orch/decide/run_abc?x=1" and ready["rejectUrl"] == "http://orch/decide/run_abc?x=2"
+
     # an orchestrator that sent no tokens must not produce usable links
     run["approval_links"] = None
     script.write_text(card_script(run, code), encoding="utf-8")

@@ -36,6 +36,7 @@ container already. Note `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is what makes
 | `DEVFLOW_SERVICE_TOKEN` | sent as `X-Devflow-Token` on every call | `dev-local-token` |
 | `N8N_PUBLIC_URL` | base for the approve/reject links in the card | `http://localhost:5678` |
 | `DEVFLOW_APPROVAL_SECRET` | signs the approve and reject links (orchestrator side) | falls back to the service token |
+| `DEVFLOW_PUBLIC_URL` | where reviewers reach the orchestrator, for the confirm page links | empty (links go to the n8n webhook) |
 | `DEVFLOW_ALERT_WEBHOOK` | Slack/Teams incoming webhook for cards and alerts | orchestrator healthz (a harmless no-op) |
 | `DEVFLOW_DEFAULT_REPO` | repo the Jira workflow targets | `acme/checkout-service` |
 | `DEVFLOW_JIRA_PROJECT` | project key triage files tickets into | `ENG` |
@@ -83,8 +84,13 @@ Workflow 02 only proceeds for tickets carrying the `ai-assist` label.
   `DEVFLOW_APPROVAL_SECRET`, or it falls back to the service token. Anyone who
   has the URL can still use it until it expires, so send cards only to the
   people who may approve. Some chat apps fetch a link to show a preview, and
-  that fetch would count as a click. Put the link behind a confirm page before
-  using Slack or Teams unfurling.
+  against the n8n webhook that fetch would count as a click. Set
+  `DEVFLOW_PUBLIC_URL` to where reviewers can reach the orchestrator and the
+  card links to its confirm page instead (`/decide/...`). Opening that link only
+  shows what is waiting and a button, and the decision happens when the button
+  is pressed, so a preview cannot approve anything. The page escapes everything
+  a model or tool wrote, forbids scripts and framing, and gives the same answer
+  for a missing run, a decided run and a bad token.
 - Give the agent a GitHub token scoped to one repo, and a Jira account whose
   permissions match the tools in `policy.py`. The tiers are a second line of
   defence, not the first one.

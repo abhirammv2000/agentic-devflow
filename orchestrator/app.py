@@ -10,14 +10,16 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+from urllib.parse import parse_qs
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from . import playbooks, signing, telemetry
+from . import decide_page, playbooks, signing, telemetry
 from .config import settings
 from .engine import AgentEngine
 from .mcp_registry import registry
@@ -265,6 +267,64 @@ async def approve(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
 
     run = await eng.resume(run, decisions, reviewer=req.reviewer, note=req.note)
     return run.public()
+
+
+# the confirm page behind the approve and reject links. These routes have no service token, because the
+# reviewer who opens them does not have one. The signed token in the link is what authorises them.
+
+def _page(html: str, status_code: int = 200) -> HTMLResponse:
+    return HTMLResponse(html, status_code=status_code, headers=decide_page.SECURITY_HEADERS)
+
+
+def _link_problem(run, decision: str, token: str, expires: int | None) -> tuple[int, str] | None:
+    """A (status, message) if this link cannot be used, else None. The message is the same for a missing run, a
+    run that is not waiting and a bad token, so a page cannot be used to find out which run ids exist."""
+    unusable = (404, "This link is no longer valid. The run may have been decided already, or the link has expired.")
+    if decision not in ("approve", "reject") or run is None or run.status != STATUS_AWAITING_APPROVAL:
+        return unusable
+    pending_ids = [a["tool_use_id"] for a in (run.pending or {}).get("approvals", [])]
+    reason = signing.check_link_token(settings.approval_secret or settings.service_token, run.id, decision,
+                                      pending_ids, expires, token)
+    if reason:
+        log.warning("decision page refused for %s: %s", run.id, reason)
+        return unusable
+    return None
+
+
+@app.get("/decide/{run_id}", response_class=HTMLResponse)
+async def decide_page_get(run_id: str, decision: str = "approve", token: str = "", expires: int | None = None):
+    """Show what is waiting and a button. Deciding happens on POST, so a link preview cannot approve anything."""
+    run = run_store.load(run_id)
+    problem = _link_problem(run, decision, token, expires)
+    if problem:
+        return _page(decide_page.message("Link not valid", problem[1]), problem[0])
+    return _page(decide_page.confirm(run.public(), decision, token, expires))
+
+
+@app.post("/decide/{run_id}", response_class=HTMLResponse)
+async def decide_page_post(run_id: str, request: Request):
+    raw = await request.body()
+    if len(raw) > 4096:
+        return _page(decide_page.message("Too large", "That request is too large."), 413)
+    form = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", errors="replace")).items()}
+    decision = form.get("decision", "")
+    try:
+        expires = int(form.get("expires", ""))
+    except ValueError:
+        expires = None
+    run = run_store.load(run_id)
+    problem = _link_problem(run, decision, form.get("token", ""), expires)
+    if problem:
+        return _page(decide_page.message("Link not valid", problem[1]), problem[0])
+
+    reviewer = (form.get("reviewer", "").strip()[:60]) or "link-click"
+    req = ApprovalRequest(approve_all=decision == "approve", reject_all=decision == "reject", reviewer=reviewer,
+                          source="link", token=form.get("token"), expires=expires)
+    try:
+        result = await approve(run_id, req)
+    except HTTPException as exc:
+        return _page(decide_page.message("Not recorded", str(exc.detail)), exc.status_code)
+    return _page(decide_page.done(result))
 
 
 # trigger adapters: thin mappings from webhook payloads to playbook runs

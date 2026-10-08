@@ -57,9 +57,15 @@ class Run:
             return None
         from . import signing
 
-        return signing.make_link_tokens(
+        links = signing.make_link_tokens(
             settings.approval_secret or settings.service_token, self.id, ids, settings.approval_ttl_seconds
         )
+        if settings.public_url:
+            for decision in ("approve", "reject"):
+                links[decision + "_url"] = "{}/decide/{}?decision={}&token={}&expires={}".format(
+                    settings.public_url, self.id, decision, links[decision], links["expires"]
+                )
+        return links
 
     def log(self, kind: str, **detail: Any) -> None:
         self.events.append({"ts": time.time(), "kind": kind, **detail})
