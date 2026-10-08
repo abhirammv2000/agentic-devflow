@@ -44,6 +44,9 @@ class Run:
     usage: dict[str, int] = field(default_factory=dict)
     # True once a read tool has returned outside text. Saved with the run, so it survives a pause for approval.
     tainted: bool = False
+    # tool calls that already worked, as "name + arguments". Saved with the run so a resume still knows them.
+    seen_calls: list[str] = field(default_factory=list)
+    repeated_calls: int = 0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -69,6 +72,7 @@ class Run:
             "tool_calls": self.tool_calls,
             "usage": self.usage,
             "tainted": self.tainted,
+            "repeated_calls": self.repeated_calls,
             "pending_approvals": (self.pending or {}).get("approvals", []),
             "actions": [e for e in self.events if e["kind"] == "tool_result"],
             "created_at": self.created_at,

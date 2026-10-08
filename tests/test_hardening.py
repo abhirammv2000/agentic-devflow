@@ -254,7 +254,8 @@ async def test_approvals_are_counted_by_decision(store):
     approved = sample("devflow_approvals_total", decision="approved")
     rejected = sample("devflow_approvals_total", decision="rejected")
     engine = ScriptedEngine(IssueRegistry(), store, [
-        tool_turn(("t1", *COMMENT)), tool_turn(("t2", *COMMENT)), text_turn("done"),
+        tool_turn(("t1", *COMMENT)), tool_turn(("t2", "gh_comment_issue", {"repo": "a/b", "number": 1, "body": "second"})),
+        text_turn("done"),
     ])
     run = await engine.start("issue_triage", {"repo": "a/b", "number": 1}, "semi")
     run = await engine.resume(run, {"t1": True})

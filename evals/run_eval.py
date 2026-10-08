@@ -85,12 +85,16 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--taint", choices=["on", "off"], default="on")
+    parser.add_argument("--only", help="run just this case, and save under its own name")
     args = parser.parse_args()
+    cases = [c for c in CASES if args.only in (None, c.name)]
+    if not cases:
+        sys.exit("no case called " + args.only)
 
     await registry.start()
     rows: list[dict] = []
     try:
-        for case in CASES:
+        for case in cases:
             for i in range(args.repeats):
                 row = await play(case, i)
                 rows.append(row)
@@ -105,11 +109,12 @@ async def main() -> None:
         sys.exit(f"{sum(r['provider_failed'] for r in rows)} of {len(rows)} runs hit a provider failure, so nothing was saved.")
 
     RESULTS.mkdir(exist_ok=True)
-    name = f"{settings.provider}_{settings.model}_taint-{args.taint}".replace("/", "_").replace(":", "_")
+    name = f"{settings.provider}_{settings.model}_taint-{args.taint}" + (f"_{args.only}" if args.only else "")
+    name = name.replace("/", "_").replace(":", "_")
     (RESULTS / f"{name}.json").write_text(json.dumps(rows, indent=1), encoding="utf-8")
 
     print(f"{settings.provider}:{settings.model}  taint rule {args.taint}  {args.repeats} runs per case")
-    for case in CASES:
+    for case in cases:
         group = [r for r in rows if r["case"] == case.name]
         n = len(group)
         if case.kind == "task":

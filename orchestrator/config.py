@@ -55,6 +55,9 @@ class Settings:
     autonomy: str = os.getenv("DEVFLOW_AUTONOMY", "semi")
     max_iterations: int = _int("DEVFLOW_MAX_ITERATIONS", 25)
     max_tool_calls: int = _int("DEVFLOW_MAX_TOOL_CALLS", 60)
+    # the same call (same tool, same arguments) after it already worked is refused. This many refusals in
+    # one run and the run stops, because the model is stuck. A small local model did this in the first eval.
+    max_repeated_calls: int = _int("DEVFLOW_MAX_REPEATED_CALLS", 3)
     # input plus output tokens in one run, so a confused model cannot spend without end
     max_run_tokens: int = _int("DEVFLOW_MAX_RUN_TOKENS", 400_000)
     # publish needs approval once a run has read outside text, even at 'autonomous'. See policy.py.

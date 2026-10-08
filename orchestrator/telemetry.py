@@ -36,6 +36,7 @@ TAINT_ESCALATIONS = Counter(
     "devflow_taint_escalations_total",
     "Publish calls that needed approval only because the run had read outside text.",
 )
+REPEATED_CALLS = Counter("devflow_repeated_calls_total", "Calls refused because they repeated one that already worked.", ["tool"])
 TOKENS = Counter("devflow_tokens_total", "Model tokens used.", ["direction"])
 
 _provider = None

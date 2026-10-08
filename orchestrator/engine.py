@@ -41,6 +41,18 @@ from .store import (
 
 log = logging.getLogger("devflow.engine")
 
+# Decided in the engine, not the policy: the call is not risky, it is a repeat.
+DECISION_REPEAT = "repeat"
+REPEAT_MESSAGE = (
+    "You already made this exact call and it worked. Do not make it again. "
+    "Continue with the next step, or finish and report."
+)
+
+
+def call_key(name: str, arguments: Any) -> str:
+    """The identity of a call: the tool and its arguments, with key order and spacing ignored."""
+    return name + "\x00" + json.dumps(arguments, sort_keys=True, default=str)
+
 
 class AgentEngine:
     def __init__(
@@ -91,6 +103,10 @@ class AgentEngine:
         results: list[ToolResult] = []
 
         for call in run.pending["calls"]:
+            if call["decision"] == DECISION_REPEAT:
+                results.append(self._refuse_repeat(run, call))
+                continue
+
             if call["decision"] == policy.DECISION_DENIED:
                 results.append(ToolResult(call["id"], call["policy_reason"], True))
                 run.log("tool_denied", tool=call["name"], reason=call["policy_reason"])
@@ -210,6 +226,11 @@ class AgentEngine:
             )
             calls = []
             for call in turn.tool_calls:
+                if call_key(call.name, call.arguments) in run.seen_calls and not call.parse_error:
+                    calls.append({"id": call.id, "name": call.name, "input": call.arguments, "parse_error": "",
+                                  "decision": DECISION_REPEAT, "tier": policy.tier_of(call.name),
+                                  "policy_reason": "repeat of a call that already worked"})
+                    continue
                 decision = policy.evaluate(call.name, run.autonomy, book.allowed_tools, tainted=tainted)
                 telemetry.TOOL_DECISIONS.labels(call.name, decision.tier, decision.action).inc()
                 if tainted and decision.action == policy.DECISION_APPROVAL and "read text from outside" in decision.reason:
@@ -279,7 +300,9 @@ class AgentEngine:
 
             results = []
             for call in calls:
-                if call["decision"] == policy.DECISION_DENIED:
+                if call["decision"] == DECISION_REPEAT:
+                    results.append(self._refuse_repeat(run, call))
+                elif call["decision"] == policy.DECISION_DENIED:
                     results.append(ToolResult(call["id"], call["policy_reason"], True))
                     run.log("tool_denied", tool=call["name"], reason=call["policy_reason"])
                 else:
@@ -287,8 +310,18 @@ class AgentEngine:
 
             run.messages.extend(self.provider.tool_result_messages(results))
             self.store.save(run)
+            if run.repeated_calls >= settings.max_repeated_calls:
+                return await self._fail(
+                    run, "the model kept repeating calls that already worked ({} refused)".format(run.repeated_calls)
+                )
 
     # helpers
+
+    def _refuse_repeat(self, run: Run, call: dict[str, Any]) -> ToolResult:
+        run.repeated_calls += 1
+        telemetry.REPEATED_CALLS.labels(call["name"]).inc()
+        run.log("tool_repeated", tool=call["name"], arguments=_preview(call["input"]))
+        return ToolResult(call["id"], REPEAT_MESSAGE, True)
 
     async def _execute(self, run: Run, call: dict[str, Any]) -> ToolResult:
         run.tool_calls += 1
@@ -296,6 +329,12 @@ class AgentEngine:
             text, is_error = await self.registry.call(call["name"], call["input"])
             tool_span.set_attribute("devflow.ok", not is_error)
         telemetry.TOOL_RESULTS.labels(call["name"], str(not is_error).lower()).inc()
+        if not is_error:
+            if not policy.reads_outside_text(call["name"]):
+                # something changed, so reading the same thing again is legitimate (a file after an edit,
+                # the tests after a fix). Writes and publishes stay remembered, because doing one twice is the harm.
+                run.seen_calls = [k for k in run.seen_calls if not policy.reads_outside_text(k.split("\x00")[0])]
+            run.seen_calls.append(call_key(call["name"], call["input"]))
         run.log(
             "tool_result",
             tool=call["name"],
