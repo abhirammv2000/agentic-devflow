@@ -42,6 +42,8 @@ class Run:
     iterations: int = 0
     tool_calls: int = 0
     usage: dict[str, int] = field(default_factory=dict)
+    # True once a read tool has returned outside text. Saved with the run, so it survives a pause for approval.
+    tainted: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -66,6 +68,7 @@ class Run:
             "iterations": self.iterations,
             "tool_calls": self.tool_calls,
             "usage": self.usage,
+            "tainted": self.tainted,
             "pending_approvals": (self.pending or {}).get("approvals", []),
             "actions": [e for e in self.events if e["kind"] == "tool_result"],
             "created_at": self.created_at,

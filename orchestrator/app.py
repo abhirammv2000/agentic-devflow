@@ -13,13 +13,15 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from . import playbooks
+from . import playbooks, telemetry
 from .config import settings
 from .engine import AgentEngine
 from .mcp_registry import registry
+from .ratelimit import RateLimiter
 from .store import STATUS_AWAITING_APPROVAL, RunStore
 
 logging.basicConfig(
@@ -29,11 +31,13 @@ log = logging.getLogger("devflow.api")
 
 run_store = RunStore()
 engine: AgentEngine | None = None
+run_limiter = RateLimiter(lambda: settings.runs_per_minute)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global engine
+    telemetry.configure()
     await registry.start()
     engine = AgentEngine(registry, run_store)
     if settings.service_token == DEFAULT_TOKEN:
@@ -70,6 +74,16 @@ def require_token(x_devflow_token: str = Header(default="")) -> None:
     # compare_digest takes the same time however many leading characters match
     if not hmac.compare_digest(x_devflow_token.encode(), settings.service_token.encode()):
         raise HTTPException(status_code=401, detail="bad or missing X-Devflow-Token")
+
+
+def limit_runs() -> None:
+    wait = run_limiter.check()
+    if wait is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="too many runs started in the last minute",
+            headers={"Retry-After": str(wait)},
+        )
 
 
 def _engine() -> AgentEngine:
@@ -138,7 +152,7 @@ async def list_tools() -> dict[str, Any]:
 
 # runs
 
-@app.post("/runs", dependencies=[Depends(require_token)])
+@app.post("/runs", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def create_run(req: RunRequest) -> dict[str, Any]:
     eng = _engine()
     try:
@@ -170,6 +184,12 @@ async def _background(eng: AgentEngine, req: RunRequest, placeholder_id: str) ->
 @app.get("/runs", dependencies=[Depends(require_token)])
 async def list_runs(limit: int = 50) -> dict[str, Any]:
     return {"runs": run_store.list(limit)}
+
+
+@app.get("/metrics", dependencies=[Depends(require_token)])
+async def metrics() -> Response:
+    """Prometheus metrics: runs, tool decisions, approvals, tokens and run time. Never any issue or file text."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/usage", dependencies=[Depends(require_token)])
@@ -246,19 +266,19 @@ class JiraEvent(BaseModel):
     branch: str | None = None
 
 
-@app.post("/triggers/github-issue", dependencies=[Depends(require_token)])
+@app.post("/triggers/github-issue", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def trigger_issue(evt: GitHubIssueEvent) -> dict[str, Any]:
     run = await _engine().start("issue_triage", evt.model_dump())
     return run.public()
 
 
-@app.post("/triggers/github-pr", dependencies=[Depends(require_token)])
+@app.post("/triggers/github-pr", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def trigger_pr(evt: GitHubPREvent) -> dict[str, Any]:
     run = await _engine().start("review_pr", evt.model_dump())
     return run.public()
 
 
-@app.post("/triggers/jira-ticket", dependencies=[Depends(require_token)])
+@app.post("/triggers/jira-ticket", dependencies=[Depends(require_token), Depends(limit_runs)])
 async def trigger_jira(evt: JiraEvent) -> dict[str, Any]:
     inputs = {k: v for k, v in evt.model_dump().items() if v is not None}
     run = await _engine().start("implement_ticket", inputs)

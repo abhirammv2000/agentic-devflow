@@ -55,6 +55,12 @@ class Settings:
     autonomy: str = os.getenv("DEVFLOW_AUTONOMY", "semi")
     max_iterations: int = _int("DEVFLOW_MAX_ITERATIONS", 25)
     max_tool_calls: int = _int("DEVFLOW_MAX_TOOL_CALLS", 60)
+    # input plus output tokens in one run, so a confused model cannot spend without end
+    max_run_tokens: int = _int("DEVFLOW_MAX_RUN_TOKENS", 400_000)
+    # publish needs approval once a run has read outside text, even at 'autonomous'. See policy.py.
+    taint_rule: bool = os.getenv("DEVFLOW_TAINT_RULE", "1") != "0"
+    # POST /runs and the trigger routes, per minute
+    runs_per_minute: int = _int("DEVFLOW_RUNS_PER_MINUTE", 30)
 
     # Dollars per million tokens, used only to estimate cost in /usage. Left at 0
     # the estimate is not shown, because the right price depends on your model.
