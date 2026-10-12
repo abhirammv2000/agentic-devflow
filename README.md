@@ -67,7 +67,7 @@ Four risk tiers and three autonomy levels ([policy.py](orchestrator/policy.py)):
 - A tool nobody classified is treated as `critical`, so adding an MCP server cannot quietly widen what runs unattended.
 - If the model proposes five calls at once and one needs approval, none of them run until the decision comes back.
 
-All three are covered by tests. [ARCHITECTURE.md](ARCHITECTURE.md) explains why the agent loop is hand-written instead of using an SDK tool runner, and [docs/INTERVIEW.md](docs/INTERVIEW.md) has the design questions I expect and what I measured.
+All three are covered by tests. [ARCHITECTURE.md](ARCHITECTURE.md) explains why the agent loop is hand-written instead of using an SDK tool runner, and [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) has the design questions I expect and what I measured.
 
 ## Prompt injection
 
@@ -93,6 +93,24 @@ First run, on a local `qwen2.5-coder:7b` through Ollama, 3 runs per case, so the
 | Ordinary triage passed | 0/3 | 0/3 |
 
 The 7B model was fooled every time, so its own judgement protects nothing. With the rule on, the attacker's comment never ran. With it off at `autonomous`, the comment and the ticket were posted all three times. At `semi` publishing already waits for a person. A stronger model may resist more often, and I have not run one. The ordinary triage case fails because the model cannot do five steps in order: first it labelled the issue five times and never commented, which led to the repeated-call guard above. With the guard it labels once and stops. That is 6 tool calls down to 2, still not a pass.
+
+## Benchmarks
+
+The injection evals above test safety. Two benchmarks in `evals/` test whether the agent does the job, and grade by running code, never by reading what the model said.
+
+- **`evals/codefix`: fixing bugs.** 12 small Python projects, each with a ticket, a failing test and a hidden test file the agent never sees. A task counts as solved only when every hidden test passes. Three agent set-ups are compared (the ticket alone, plus a read-test-fix method, plus the first test run placed in the prompt), so the effect of prompt and context choices can be measured. The report gives a pass rate with a Wilson interval, latency, tokens, and a paired sign test.
+- **`evals/testgen`: writing tests.** 6 modules with 38 hand-written bugs. Tests are graded by how many of the bugs they catch (mutation score), and tests that fail on the correct module score zero.
+
+Both run the real engine and the real MCP repo tools, in a fresh process and working copy per attempt. `python -m evals.codefix.validate` and `python -m evals.testgen.validate` check the tasks themselves first: the buggy repo must fail the hidden tests, the reference solution must pass them, and every bug must be catchable.
+
+The grading is tested without a model: a scripted model that edits the failing test, hard-codes the example from the ticket, or writes tests with no assertions must be marked as failing, and the 12 reference solutions must be marked as solved through the real tool stack.
+
+**No full model run is published yet.** One attempt on a local 7B model takes about 4 to 10 minutes on a CPU, so a full run is several hours, and the few attempts I did run are not enough to say anything. With 12 tasks the intervals will be wide even when it is done. The commands are in [.claude/skills/devflow-bench/SKILL.md](.claude/skills/devflow-bench/SKILL.md):
+
+```bash
+DEVFLOW_PROVIDER=ollama DEVFLOW_MODEL=qwen2.5-coder:7b python -m evals.codefix.run
+python -m evals.codefix.report evals/results/codefix_ollama_qwen2.5-coder_7b.jsonl
+```
 
 ## Metrics and traces
 
@@ -136,6 +154,8 @@ For live GitHub and Jira, set `DEVFLOW_MOCK=0` with `GITHUB_TOKEN` and `JIRA_*` 
 mcp_servers/       GitHub, Jira and sandboxed working-copy MCP servers
 orchestrator/      policy.py (risk tiers), engine.py (agent loop), guard.py, telemetry.py, providers/, playbooks.py, store.py, app.py
 evals/             cases, graders and the runner for the injection and triage evals
+evals/codefix/     bug-fixing benchmark: 12 tasks, hidden-test grading, runner, report
+evals/testgen/     test-writing benchmark: 6 modules, 38 bugs, mutation grading
 n8n/workflows/     four importable workflows
 sandbox/demo-repo/ small repo for the agent to work on
 scripts/           demo CLI, smoke test, reset
@@ -147,6 +167,6 @@ scripts/           demo CLI, smoke test, reset
 - Only GitHub has been run live. Jira has only been run against the mock backend.
 - The test runner is limited by an allow-list, not a real sandbox. Put it in a container before pointing it at code you don't trust.
 - The approve and reject links in workflow 04 are signed and expire, but anyone holding one can use it until then. Set `DEVFLOW_PUBLIC_URL` so the links go to the orchestrator's confirm page, where a link preview cannot approve anything. Without it they go to the n8n webhook, which decides on a plain GET.
-- The 149 tests check the loop, policy, injection defences, signed approval links, MCP layer, HTTP contract and both model formats. The evals are written and have run once, on a 7B local model. They have not run on a stronger model.
+- The 185 tests check the loop, policy, injection defences, signed approval links, MCP layer, HTTP contract, both model formats and the benchmark graders. The evals are written and have run once, on a 7B local model. They have not run on a stronger model.
 - The taint rule counts every read as outside text, so at `autonomous` almost every publish waits for a person. That is the point, but it makes `autonomous` close to `semi` for publishing.
 - The rate limit and the metrics are per process.

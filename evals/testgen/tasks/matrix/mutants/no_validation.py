@@ -1,0 +1,6 @@
+def transpose(matrix):
+    """Transpose a rectangular matrix given as a list of rows. An empty matrix gives []."""
+    if not matrix:
+        return []
+    width = len(matrix[0])
+    return [[row[c] for row in matrix] for c in range(width)]

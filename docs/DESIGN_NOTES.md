@@ -1,6 +1,6 @@
-# Interview notes
+# Design notes
 
-The questions I expect about DevFlow, with the answers tied to code and to what I measured. Where something is not done or not measured, it says so.
+Questions a reader is likely to have about DevFlow, with answers tied to the code and to what I measured. Where something is not done or not measured, it says so.
 
 ## What is it, in two sentences?
 
