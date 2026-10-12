@@ -23,7 +23,7 @@ pip install -r requirements.txt
 cp .env.example .env                               # set ANTHROPIC_API_KEY
 
 python scripts/smoke_test.py                       # no model calls, checks MCP and policy
-python -m pytest -q                                # 149 tests
+python -m pytest -q                                # 185 tests
 
 python scripts/demo.py issue_triage --repo acme/checkout-service --number 41
 ```
